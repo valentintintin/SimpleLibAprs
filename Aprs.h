@@ -156,11 +156,11 @@ public:
     static void reset(AprsPacket* aprsPacket);
     static void reset(AprsPacketLite* aprsPacket);
 private:
-    static void appendPosition(AprsPosition* position, char* aprsResult);
+    static void appendPosition(const AprsPosition* position, char* aprsResult);
     static void appendComment(AprsPacket *aprsPacket, char* aprsResult);
     static void appendTelemetries(AprsPacket *aprsPacket, char* aprsResult);
     static void appendMessage(AprsMessage *message, char* aprsResult);
-    static void appendWeather(AprsWeather *weather, char* aprsResult);
+    static void appendWeather(const AprsWeather *weather, char* aprsResult);
     static char *ax25Base91Enc(char *destination, uint8_t width, uint32_t value);
     static const char *formatDouble(double value);
     static void trim(char *string);

@@ -91,14 +91,14 @@ bool Aprs::decode(const char* aprs, AprsPacketLite* aprsPacket) {
     strcpy(aprsPacket->raw, aprs);
     trim(aprsPacket->raw);
 
-    char *point = strchr(aprs, ':');
+    const char *point = strchr(aprs, ':');
     if (point != nullptr) {
         strcpy(aprsPacket->content, point + 1);
 
         if (aprsPacket->content[0] == '=' || aprsPacket->content[0] == '!' || aprsPacket->content[0] == '/' || aprsPacket->content[0] == '@') {
             aprsPacket->type = Position;
 
-            char* find = strchr(aprsPacket->message.message, '_');
+            const char* find = strchr(aprsPacket->message.message, '_');
             if (find != nullptr) {
                 aprsPacket->type = Weather;
             }
@@ -114,7 +114,7 @@ bool Aprs::decode(const char* aprs, AprsPacketLite* aprsPacket) {
         else if (aprsPacket->content[0] == ':') {
             strcpy(aprsPacket->message.message, aprsPacket->content + 1);
 
-            char* find = strchr(aprsPacket->message.message, ':');
+            const char* find = strchr(aprsPacket->message.message, ':');
             if (find != nullptr) {
                 aprsPacket->type = Message;
                 strncpy(aprsPacket->message.destination, aprsPacket->message.message, find - aprsPacket->message.message);
@@ -176,11 +176,11 @@ bool Aprs::decode(const char* aprs, AprsPacketLite* aprsPacket) {
     return true;
 }
 
-void Aprs::appendPosition(AprsPosition* position, char* aprsResult) {
-    uint32_t latitude, longitude;
-    latitude = 900000000 - position->latitude * 10000000;
+void Aprs::appendPosition(const AprsPosition* position, char* aprsResult) {
+    uint32_t latitude = 900000000 - position->latitude * 10000000;
     latitude = latitude / 26 - latitude / 2710 + latitude / 15384615;
-    longitude = 900000000 + position->longitude * 10000000 / 2;
+
+    uint32_t longitude = 900000000 + position->longitude * 10000000 / 2;
     longitude = longitude / 26 - longitude / 2710 + longitude / 15384615;
 
     sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%c"), position->overlay);
@@ -204,10 +204,10 @@ void Aprs::appendPosition(AprsPosition* position, char* aprsResult) {
         ax25Base91Enc(bufferBase91, 1, (uint32_t) (log1p(position->speedKnots) / 0.07696));
         strcpy(&aprsResult[strlen(aprsResult)], bufferBase91);
 
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%c"), char(getCompressionType(CURRENT, RMC, COMPRESSED)+33));
+        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%c"), (char) getCompressionType(CURRENT, RMC, COMPRESSED)+33);
 
         if (position->altitudeFeet > 0) {
-            int alt_int = max(-99999, min(999999, (int) position->altitudeFeet));
+            const int alt_int = max(-99999, min(999999, (int) position->altitudeFeet));
             if (alt_int < 0) {
                 sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("/A=-%05d"), alt_int * -1);
             } else {
@@ -218,7 +218,7 @@ void Aprs::appendPosition(AprsPosition* position, char* aprsResult) {
         ax25Base91Enc(bufferBase91, 2, (uint32_t) (log(position->altitudeFeet) / log(1.002)));
         strcpy(&aprsResult[strlen(aprsResult)], bufferBase91);
 
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%c"), char(getCompressionType(CURRENT, GGA, COMPRESSED)+33));
+        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%c"), (char) getCompressionType(CURRENT, GGA, COMPRESSED)+33);
     }
 }
 
@@ -247,13 +247,13 @@ void Aprs::appendTelemetries(AprsPacket *aprsPacket, char* aprsResult) {
             ax25Base91Enc(bufferBase91, 2, aprsPacket->telemetries.telemetrySequenceNumber);
             strcpy(&aprsResult[strlen(aprsResult)], bufferBase91);
 
-            for (auto telemetry : aprsPacket->telemetries.telemetriesAnalog) {
+            for (const auto telemetry : aprsPacket->telemetries.telemetriesAnalog) {
                 ax25Base91Enc(bufferBase91, 2, (uint16_t) abs(telemetry.value));
                 strcpy(&aprsResult[strlen(aprsResult)], bufferBase91);
             }
 
             for (uint8_t i = 0; i < 8; i++) {
-                auto telemetry = aprsPacket->telemetries.telemetriesBoolean[i];
+                const auto telemetry = aprsPacket->telemetries.telemetriesBoolean[i];
                 if (telemetry.value > 0) {
                     boolTelemetry += 1 << i;
                 }
@@ -271,7 +271,7 @@ void Aprs::appendTelemetries(AprsPacket *aprsPacket, char* aprsResult) {
 
             sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("T#%d,"), aprsPacket->telemetries.telemetrySequenceNumber);
 
-            for (auto telemetry : aprsPacket->telemetries.telemetriesAnalog) {
+            for (const auto telemetry : aprsPacket->telemetries.telemetriesAnalog) {
                 if (aprsPacket->telemetries.legacy) {
                     sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%d"), (uint8_t) abs(telemetry.value));
                 } else {
@@ -280,7 +280,7 @@ void Aprs::appendTelemetries(AprsPacket *aprsPacket, char* aprsResult) {
                 strcat_P(aprsResult, PSTR(","));
             }
 
-            for (auto telemetry : aprsPacket->telemetries.telemetriesBoolean) {
+            for (const auto telemetry : aprsPacket->telemetries.telemetriesBoolean) {
                 sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%d"), telemetry.value > 0 ? 1 : 0);
             }
             break;
@@ -345,7 +345,7 @@ void Aprs::appendTelemetries(AprsPacket *aprsPacket, char* aprsResult) {
         case TelemetryBitSense:
             sprintf_P(&aprsResult[strlen(aprsResult)], PSTR(":%-9s:BITS."), aprsPacket->source);
 
-            for (auto telemetry : aprsPacket->telemetries.telemetriesBoolean) {
+            for (const auto telemetry : aprsPacket->telemetries.telemetriesBoolean) {
                 strcat_P(aprsResult, telemetry.bitSense ? PSTR("1") : PSTR("0"));
             }
 
@@ -378,7 +378,7 @@ void Aprs::appendMessage(AprsMessage *message, char* aprsResult) {
     }
 }
 
-void Aprs::appendWeather(AprsWeather *weather, char* aprsResult) {
+void Aprs::appendWeather(const AprsWeather *weather, char* aprsResult) {
     if (weather->useWindDirection) {
         sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%03d"), weather->windDirectionDegress);
     } else {
@@ -457,9 +457,8 @@ char* Aprs::ax25Base91Enc(char *destination, uint8_t width, uint32_t value) {
 
 const char *Aprs::formatDouble(double value) {
     double integral;
-    double fractional = modf(value, &integral);
 
-    if (fractional != 0) {
+    if (modf(value, &integral) != 0) { // fractionnal
         return PSTR("%.3f");
     }
 
@@ -479,7 +478,7 @@ void Aprs::trimEnd(char *string) {
 }
 
 void Aprs::trimStart(char *string) {
-    size_t len = strlen(string);
+    const size_t len = strlen(string);
     int start = 0;
 
     while (isspace(string[start]) || string[start] == '\n' || string[start] == '\r') {
@@ -495,11 +494,11 @@ void Aprs::trimFirstSpace(char *string) {
     string[strcspn(string, " ")] = '\0';
 }
 
-uint8_t Aprs::getCompressionType(enum GPSFix gpsFix, enum NMEA nmeaSource, enum Compression compressionType) {
+uint8_t Aprs::getCompressionType(const GPSFix gpsFix, NMEA nmeaSource, const Compression compressionType) {
     uint8_t value = 0;
     value |= (gpsFix & 0x01) << 5;
     value |= (nmeaSource & 0x03) << 3;
-    value |= (compressionType & 0x07);
+    value |= compressionType & 0x07;
     return value;
 }
 
@@ -578,8 +577,8 @@ bool Aprs::canBeDigipeated(char* path, const char* myCall) {
         return false;
     }
 
-    char *pathStart = path;
-    char buffer[CALLSIGN_LENGTH * MAX_PATH] = {'\0'};
+    const char *pathStart = path;
+    char buffer[CALLSIGN_LENGTH * MAX_PATH] = {};
 
     char *hasStar = strstr_P(path, PSTR("*")); // Search for a star
     if (hasStar != nullptr) { // We got one so we set the start of or path to it
@@ -591,8 +590,8 @@ bool Aprs::canBeDigipeated(char* path, const char* myCall) {
 
     const char *hasWide = strstr_P(pathStart, PSTR("WIDE")); // Do we have a WIDE path after star ?
     if (hasWide != nullptr) {
-        int wideN = atoi(hasWide + 3 + 1); // WIDE_  // Take the first number of WIDE
-        int wideN2 = atoi(hasWide + 3 + 1 + 2); // WIDE_-_  // Take the second one
+        const int wideN = atoi(hasWide + 3 + 1); // WIDE_  // Take the first number of WIDE
+        const int wideN2 = atoi(hasWide + 3 + 1 + 2); // WIDE_-_  // Take the second one
         const char *rest = hasWide + 3 + 1 + 2 + 1; // We take the rest of the path (possible NULL)
 
         if (wideN2 == 1) { // If we have a WIDEN-1 : last of the chain
