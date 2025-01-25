@@ -3,6 +3,8 @@
 #include "../Aprs.h"
 
 bool testDigi(const char* pathToTest, const char* callsign, const char* result);
+bool testLastHeard(const char* pathToTest, const char* result, const uint8_t nbDigiResult);
+
 void testOneFrame() {
     AprsPacket packet;
     char encoded_packet[MAX_PACKET_LENGTH];
@@ -253,13 +255,13 @@ int main() {
     printf("\n");
 
     AprsPacketLite packet2;
-    if (!Aprs::decode("F4HVV-10>APDR16,WIDE1-1*,F4HVV-9::F4HVV-15 :ack1 hello{2", &packet2)) {
+    if (!Aprs::decode("F4HVV-10>APDR16,WIDE1-1,F4HVV-9*::F4HVV-15 :ack1 hello{2", &packet2)) {
         printf("Decode error for %s\n\n", encoded_packet);
         return 1;
     } else {
-        printf("Received type %d from %s to %s by %s --> %s\nMessage length %ld to %s with ack %s and confirmed %s --> %s\n\n",
+        printf("Received type %d from %s to %s by %s with last %s --> %s\nMessage length %ld to %s with ack %s and confirmed %s --> %s\n\n",
                packet2.type,
-               packet2.source, packet2.destination, packet2.path, packet2.content,
+               packet2.source, packet2.destination, packet2.path, packet2.lastDigipeaterCallsignInPath, packet2.content,
                strlen(packet2.message.message), packet2.message.destination, packet2.message.ackToConfirm, packet2.message.ackConfirmed,
                packet2.message.message);
     }
@@ -345,6 +347,35 @@ int main() {
         return 1;
     }
 
+    if (!testLastHeard("", "", 0)) {
+        printf("Error");
+        return 1;
+    }
+    if (!testLastHeard("WIDE1-1", "", 0)) {
+        printf("Error");
+        return 1;
+    }
+    if (!testLastHeard("F4HVV-10*,WIDE1-1", "F4HVV-10", 1)) {
+        printf("Error");
+        return 1;
+    }
+    if (!testLastHeard("F4HVV-9*", "F4HVV-9", 1)) {
+        printf("Error");
+        return 1;
+    }
+    if (!testLastHeard("F4HVV-9*,F4HVV-10", "F4HVV-9", 1)) {
+        printf("Error");
+        return 1;
+    }
+    if (!testLastHeard("F4HVV-9,F4HVV-10*", "F4HVV-10", 2)) {
+        printf("Error");
+        return 1;
+    }
+    if (!testLastHeard("F4HVV-9,F4HVV-10,F4HVV-11*", "F4HVV-11", 3)) {
+        printf("Error");
+        return 1;
+    }
+
     return 0;
 }
 
@@ -355,4 +386,14 @@ bool testDigi(const char* pathToTest, const char* callsign, const char* result) 
     Aprs::canBeDigipeated(path, callsign);
     printf("%s\n\n", path);
     return strcmp(path, result) == 0;
+}
+
+bool testLastHeard(const char* pathToTest, const char* result, const uint8_t nbDigiResult) {
+    char lastCallsign[CALLSIGN_LENGTH];
+    char path[CALLSIGN_LENGTH * MAX_PATH];
+    strcpy(path, pathToTest);
+    printf("Last heard %s ?\t", path);
+    auto nbDigi = Aprs::getLastDigipeater(path, lastCallsign);
+    printf("%s %d\n\n", lastCallsign, nbDigi);
+    return strcmp(lastCallsign, result) == 0 && nbDigi == nbDigiResult;
 }

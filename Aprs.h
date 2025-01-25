@@ -144,6 +144,8 @@ typedef struct {
     char source[CALLSIGN_LENGTH]{};
     char destination[CALLSIGN_LENGTH]{};
     char path[CALLSIGN_LENGTH * MAX_PATH]{};
+    char lastDigipeaterCallsignInPath[CALLSIGN_LENGTH]{};
+    uint8_t digipeaterCount;
     AprsMessageLite message;
     AprsPacketType type = Unknown;
 } AprsPacketLite;
@@ -153,6 +155,7 @@ public:
     static uint8_t encode(AprsPacket* aprsPacket, char* aprsResult);
     static bool decode(const char* aprs, AprsPacketLite* aprsPacket);
     static bool canBeDigipeated(char* path, const char* myCall);
+    static uint8_t getLastDigipeater(const char* path, char* lastDigipeaterCallsign);
     static void reset(AprsPacket* aprsPacket);
     static void reset(AprsPacketLite* aprsPacket);
 private:
@@ -167,7 +170,8 @@ private:
     static void trimStart(char *string);
     static void trimEnd(char *string);
     static void trimFirstSpace(char *string);
-    static uint8_t getCompressionType(enum GPSFix gpsFix, enum NMEA nmeaSource, enum Compression compressionType);
+    static uint8_t getCompressionType(GPSFix gpsFix, NMEA nmeaSource, Compression compressionType);
+    static uint8_t countCharOccurrences(const char *str, size_t n, char target);
 };
 
 #endif //CUBECELL_MONITORING_APRS_H

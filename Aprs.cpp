@@ -91,6 +91,8 @@ bool Aprs::decode(const char* aprs, AprsPacketLite* aprsPacket) {
     strcpy(aprsPacket->raw, aprs);
     trim(aprsPacket->raw);
 
+    aprsPacket->digipeaterCount = getLastDigipeater(aprsPacket->path, aprsPacket->lastDigipeaterCallsignInPath);
+
     const char *point = strchr(aprs, ':');
     if (point != nullptr) {
         strcpy(aprsPacket->content, point + 1);
@@ -427,7 +429,7 @@ void Aprs::appendWeather(const AprsWeather *weather, char* aprsResult) {
     }
 
     strcat_P(aprsResult, PSTR("h"));
-    if (weather->useHumidity) {
+    if (weather->useHumidity && weather->humidity > 0) {
         sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%02d"), weather->humidity);
     } else {
         strcat_P(aprsResult, PSTR(".."));
@@ -625,4 +627,34 @@ bool Aprs::canBeDigipeated(char* path, const char* myCall) {
     }
 
     return false;
+}
+
+uint8_t Aprs::getLastDigipeater(const char *path, char* lastDigipeaterCallsign) {
+    lastDigipeaterCallsign[0] = '\0';
+    const auto lastStar = strrchr(path, '*');
+
+    if (lastStar != nullptr) {
+        const auto lastComma = strrchr(path, ',');
+
+        if (lastComma != nullptr && lastComma < lastStar) {
+            strncpy(lastDigipeaterCallsign, lastComma + 1, lastStar - 1 - lastComma);
+            return countCharOccurrences(path, lastStar - path, ',') + 1;
+        }
+
+        strncpy(lastDigipeaterCallsign, path, lastStar - path);
+        lastDigipeaterCallsign[lastStar - path] = '\0';
+        return 1;
+    }
+
+    return 0;
+}
+
+uint8_t Aprs::countCharOccurrences(const char *str, size_t n, char target) {
+    uint8_t count = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (str[i] == target) {
+            count++;
+        }
+    }
+    return count;
 }
