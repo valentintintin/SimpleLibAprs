@@ -306,6 +306,14 @@ int main() {
         printf("Error");
         return 1;
     }
+    if (!testDigi("F4HVV-10*,WIDE2-2", "F4HVV-9", "F4HVV-10,F4HVV-9*,WIDE2-1")) {
+        printf("Error");
+        return 1;
+    }
+    if (!testDigi("F4HVV-10*,WIDE2-1", "F4HVV-9", "F4HVV-10,F4HVV-9*")) {
+        printf("Error");
+        return 1;
+    }
     if (!testDigi("WIDE1-2", "F4HVV-9", "F4HVV-9*,WIDE1-1")) {
         printf("Error");
         return 1;
@@ -318,11 +326,11 @@ int main() {
         printf("Error");
         return 1;
     }
-    if (!testDigi("F4HVV-10*,WIDE2-1,WIDE1-1", "F4HVV-9", "F4HVV-10,F4HVV-9*,WIDE1-1")) {
+    if (!testDigi("F4HVV-10*,WIDE1-1,WIDE2-1", "F4HVV-9", "F4HVV-10,F4HVV-9*,WIDE2-1")) {
         printf("Error");
         return 1;
     }
-    if (!testDigi("F4HVV-10*,WIDE2-2,WIDE1-1", "F4HVV-9", "F4HVV-10,F4HVV-9*,WIDE2-1,WIDE1-1")) {
+    if (!testDigi("F4HVV-10*,WIDE1-1,WIDE2-2", "F4HVV-9", "F4HVV-10,F4HVV-9*,WIDE2-2")) {
         printf("Error");
         return 1;
     }
