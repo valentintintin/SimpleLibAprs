@@ -5,11 +5,11 @@
 #include "Aprs.h"
 
 #ifdef NATIVE
-#define strcpy_P     strcpy
-#define sprintf_P    sprintf
+#define strncpy_P     strncpy
+#define snprintf_P    snprintf
 #define sscanf_P     sscanf
 #define strstr_P     strstr
-#define strcat_P     strcat
+#define strncat_P     strncat
 #define PSTR(s)      s
 #define min         std::min
 #define max         std::max
@@ -19,17 +19,16 @@
 #endif
 
 uint8_t Aprs::encode(AprsPacket* aprsPacket, char* aprsResult) {
-    sprintf_P(aprsResult, PSTR("%s>%s"), aprsPacket->source, aprsPacket->destination);
+    snprintf_P(aprsResult, MAX_PACKET_LENGTH, PSTR("%s>%s"), aprsPacket->source, aprsPacket->destination);
 
     if (strlen(aprsPacket->path)) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR(",%s"), aprsPacket->path);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR(",%s"), aprsPacket->path);
     }
-
-    strcat_P(aprsResult, PSTR(":"));
+    strncat_P(aprsResult, PSTR(":"), MAX_PACKET_LENGTH - strlen(aprsResult));
 
     switch (aprsPacket->type) {
         case Position:
-            strcat_P(aprsResult, PSTR("="));
+            strncat_P(aprsResult, PSTR("="), MAX_PACKET_LENGTH - strlen(aprsResult));
             appendPosition(&aprsPacket->position, aprsResult);
             if (aprsPacket->position.withWeather) {
                 appendWeather(&aprsPacket->weather, aprsResult);
@@ -52,23 +51,23 @@ uint8_t Aprs::encode(AprsPacket* aprsPacket, char* aprsResult) {
             }
             break;
         case Status:
-            strcat_P(aprsResult, PSTR(">"));
+            strncat_P(aprsResult, PSTR(">"), MAX_PACKET_LENGTH - strlen(aprsResult));
             appendComment(aprsPacket, aprsResult);
             break;
         case Object:
-            sprintf_P(&aprsResult[strlen(aprsResult)], PSTR(";%s%c%d%d%dz"), aprsPacket->item.name, aprsPacket->item.active ? '*' : '_', aprsPacket->item.utcHour, aprsPacket->item.utcMinute, aprsPacket->item.utcSecond);
+            snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR(";%s%c%d%d%dz"), aprsPacket->item.name, aprsPacket->item.active ? '*' : '_', aprsPacket->item.utcHour, aprsPacket->item.utcMinute, aprsPacket->item.utcSecond);
             aprsPacket->position.withWeather = false;
             appendPosition(&aprsPacket->position, aprsResult);
             appendComment(aprsPacket, aprsResult);
             break;
         case Item:
-            sprintf_P(&aprsResult[strlen(aprsResult)], PSTR(")%s%c"), aprsPacket->item.name, aprsPacket->item.active ? '!' : '_');
+            snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR(")%s%c"), aprsPacket->item.name, aprsPacket->item.active ? '!' : '_');
             aprsPacket->position.withWeather = false;
             appendPosition(&aprsPacket->position, aprsResult);
             appendComment(aprsPacket, aprsResult);
             break;
         case RawContent:
-            strcpy(&aprsResult[strlen(aprsResult)], aprsPacket->content);
+            strncpy(aprsResult + strlen(aprsResult), aprsPacket->content, MAX_PACKET_LENGTH - strlen(aprsResult));
             break;
         default:
             return 0;
@@ -88,14 +87,14 @@ bool Aprs::decode(const char* aprs, AprsPacketLite* aprsPacket) {
         }
     }
 
-    strcpy(aprsPacket->raw, aprs);
+    strncpy(aprsPacket->raw, aprs, MAX_PACKET_LENGTH);
     trim(aprsPacket->raw);
 
     aprsPacket->digipeaterCount = getLastDigipeater(aprsPacket->path, aprsPacket->lastDigipeaterCallsignInPath);
 
     const char *point = strchr(aprs, ':');
     if (point != nullptr) {
-        strcpy(aprsPacket->content, point + 1);
+        strncpy(aprsPacket->content, point + 1, MAX_PACKET_LENGTH);
 
         if (aprsPacket->content[0] == '=' || aprsPacket->content[0] == '!' || aprsPacket->content[0] == '/' || aprsPacket->content[0] == '@') {
             aprsPacket->type = Position;
@@ -114,35 +113,35 @@ bool Aprs::decode(const char* aprs, AprsPacketLite* aprsPacket) {
             aprsPacket->type = Item;
         }
         else if (aprsPacket->content[0] == ':') {
-            strcpy(aprsPacket->message.message, aprsPacket->content + 1);
+            strncpy(aprsPacket->message.message, aprsPacket->content + 1, MESSAGE_LENGTH);
 
             const char* find = strchr(aprsPacket->message.message, ':');
             if (find != nullptr) {
                 aprsPacket->type = Message;
                 strncpy(aprsPacket->message.destination, aprsPacket->message.message, find - aprsPacket->message.message);
-                strcpy(aprsPacket->message.message, find + 1);
+                strncpy(aprsPacket->message.message, find + 1, MESSAGE_LENGTH);
             }
 
             find = strstr_P(aprsPacket->message.message, PSTR("ack"));
             if (find != nullptr) {
                 aprsPacket->type = Message;
-                strcpy(aprsPacket->message.ackConfirmed, find + 3);
+                strncpy(aprsPacket->message.ackConfirmed, find + 3, ACK_MESSAGE_LENGTH);
                 trimFirstSpace(aprsPacket->message.ackConfirmed);
-                strcpy(aprsPacket->message.message, find + 3 + strlen(aprsPacket->message.ackConfirmed));
+                strncpy(aprsPacket->message.message, find + 3 + strlen(aprsPacket->message.ackConfirmed), MESSAGE_LENGTH);
             }
 
             find = strstr_P(aprsPacket->message.message, PSTR("rej"));
             if (find != nullptr) {
                 aprsPacket->type = Message;
-                strcpy(aprsPacket->message.ackRejected, find + 3);
+                strncpy(aprsPacket->message.ackRejected, find + 3, ACK_MESSAGE_LENGTH);
                 trimFirstSpace(aprsPacket->message.ackRejected);
-                strcpy(aprsPacket->message.message, find + 3 + strlen(aprsPacket->message.ackRejected));
+                strncpy(aprsPacket->message.message, find + 3 + strlen(aprsPacket->message.ackRejected), MESSAGE_LENGTH);
             }
 
             find = strchr(aprsPacket->message.message, '{');
             if (find != nullptr) {
                 aprsPacket->type = Message;
-                strcpy(aprsPacket->message.ackToConfirm, find + 1);
+                strncpy(aprsPacket->message.ackToConfirm, find + 1, ACK_MESSAGE_LENGTH);
                 aprsPacket->message.message[find - aprsPacket->message.message] = '\0'; // remove '{'
             }
 
@@ -185,7 +184,7 @@ void Aprs::appendPosition(const AprsPosition* position, char* aprsResult) {
     uint32_t longitude = 900000000 + position->longitude * 10000000 / 2;
     longitude = longitude / 26 - longitude / 2710 + longitude / 15384615;
 
-    sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%c"), position->overlay);
+    snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%c"), position->overlay);
 
     char bufferBase91[] = {"0000\0" };
     ax25Base91Enc(bufferBase91, 4, latitude);
@@ -195,32 +194,32 @@ void Aprs::appendPosition(const AprsPosition* position, char* aprsResult) {
     strcat(aprsResult, bufferBase91);
 
     if (position->withWeather) {
-        strcat_P(aprsResult, PSTR("_"));
+        strncat_P(aprsResult, PSTR("_"), MAX_PACKET_LENGTH - strlen(aprsResult));
     } else {
         strncat(aprsResult, &position->symbol, 1);
     }
 
     if (position->altitudeInComment) {
         ax25Base91Enc(bufferBase91, 1, (uint32_t) position->courseDeg / 4);
-        strcpy(&aprsResult[strlen(aprsResult)], bufferBase91);
+        strncpy(aprsResult + strlen(aprsResult), bufferBase91, MAX_PACKET_LENGTH - strlen(aprsResult));
         ax25Base91Enc(bufferBase91, 1, (uint32_t) (log1p(position->speedKnots) / 0.07696));
-        strcpy(&aprsResult[strlen(aprsResult)], bufferBase91);
+        strncpy(aprsResult + strlen(aprsResult), bufferBase91, MAX_PACKET_LENGTH - strlen(aprsResult));
 
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%c"), (char) getCompressionType(CURRENT, RMC, COMPRESSED)+33);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%c"), (char) getCompressionType(CURRENT, RMC, COMPRESSED)+33);
 
         if (position->altitudeFeet > 0) {
             const int alt_int = max(-99999, min(999999, (int) position->altitudeFeet));
             if (alt_int < 0) {
-                sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("/A=-%05d"), alt_int * -1);
+                snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("/A=-%05d"), alt_int * -1);
             } else {
-                sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("/A=%06d"), alt_int);
+                snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("/A=%06d"), alt_int);
             }
         }
     } else {
         ax25Base91Enc(bufferBase91, 2, (uint32_t) (log(position->altitudeFeet) / log(1.002)));
-        strcpy(&aprsResult[strlen(aprsResult)], bufferBase91);
+        strncpy(aprsResult + strlen(aprsResult), bufferBase91, MAX_PACKET_LENGTH - strlen(aprsResult));
 
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%c"), (char) getCompressionType(CURRENT, GGA, COMPRESSED)+33);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%c"), (char) getCompressionType(CURRENT, GGA, COMPRESSED)+33);
     }
 }
 
@@ -244,14 +243,14 @@ void Aprs::appendTelemetries(AprsPacket *aprsPacket, char* aprsResult) {
                 aprsPacket->telemetries.telemetrySequenceNumber = 0;
             }
 
-            strcat_P(aprsResult, PSTR("|"));
+            strncat_P(aprsResult, PSTR("|"), MAX_PACKET_LENGTH - strlen(aprsResult));
 
             ax25Base91Enc(bufferBase91, 2, aprsPacket->telemetries.telemetrySequenceNumber);
-            strcpy(&aprsResult[strlen(aprsResult)], bufferBase91);
+            strncpy(aprsResult + strlen(aprsResult), bufferBase91, MAX_PACKET_LENGTH - strlen(aprsResult));
 
             for (const auto telemetry : aprsPacket->telemetries.telemetriesAnalog) {
                 ax25Base91Enc(bufferBase91, 2, (uint16_t) abs(telemetry.value));
-                strcpy(&aprsResult[strlen(aprsResult)], bufferBase91);
+                strncpy(aprsResult + strlen(aprsResult), bufferBase91, MAX_PACKET_LENGTH - strlen(aprsResult));
             }
 
             for (uint8_t i = 0; i < 8; i++) {
@@ -262,32 +261,32 @@ void Aprs::appendTelemetries(AprsPacket *aprsPacket, char* aprsResult) {
             }
 
             ax25Base91Enc(bufferBase91, 2, boolTelemetry);
-            strcpy(&aprsResult[strlen(aprsResult)], bufferBase91);
+            strncpy(aprsResult + strlen(aprsResult), bufferBase91, MAX_PACKET_LENGTH - strlen(aprsResult));
 
-            strcat_P(aprsResult, PSTR("|"));
+            strncat_P(aprsResult, PSTR("|"), MAX_PACKET_LENGTH - strlen(aprsResult));
             break;
         case Telemetry:
             if (aprsPacket->telemetries.legacy && aprsPacket->telemetries.telemetrySequenceNumber > 999) {
                 aprsPacket->telemetries.telemetrySequenceNumber = 0;
             }
 
-            sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("T#%d,"), aprsPacket->telemetries.telemetrySequenceNumber);
+            snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("T#%d,"), aprsPacket->telemetries.telemetrySequenceNumber);
 
             for (const auto telemetry : aprsPacket->telemetries.telemetriesAnalog) {
                 if (aprsPacket->telemetries.legacy) {
-                    sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%d"), (uint8_t) abs(telemetry.value));
+                    snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%d"), (uint8_t) abs(telemetry.value));
                 } else {
-                    sprintf_P(&aprsResult[strlen(aprsResult)], formatDouble(telemetry.value), telemetry.value);
+                    snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), formatDouble(telemetry.value), telemetry.value);
                 }
-                strcat_P(aprsResult, PSTR(","));
+                strncat_P(aprsResult, PSTR(","), MAX_PACKET_LENGTH - strlen(aprsResult));
             }
 
             for (const auto telemetry : aprsPacket->telemetries.telemetriesBoolean) {
-                sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%d"), telemetry.value > 0 ? 1 : 0);
+                snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%d"), telemetry.value > 0 ? 1 : 0);
             }
             break;
         case TelemetryLabel:
-            sprintf_P(&aprsResult[strlen(aprsResult)], PSTR(":%-9s:PARM.%-1.7s,%-1.6s,%-1.5s,%-1.5s,%-1.4s,%-1.5s,%-1.4s,%-1.4s,%-1.4s,%-1.4s,%-1.3s,%-1.3s,%-1.3s"),
+            snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR(":%-9s:PARM.%-1.7s,%-1.6s,%-1.5s,%-1.5s,%-1.4s,%-1.5s,%-1.4s,%-1.4s,%-1.4s,%-1.4s,%-1.3s,%-1.3s,%-1.3s"),
                       aprsPacket->source,
                       aprsPacket->telemetries.telemetriesAnalog[0].name,
                       aprsPacket->telemetries.telemetriesAnalog[1].name,
@@ -305,7 +304,7 @@ void Aprs::appendTelemetries(AprsPacket *aprsPacket, char* aprsResult) {
             );
             break;
         case TelemetryUnit:
-            sprintf_P(&aprsResult[strlen(aprsResult)], PSTR(":%-9s:UNIT.%-1.7s,%-1.6s,%-1.5s,%-1.5s,%-1.4s,%-1.5s,%-1.4s,%-1.4s,%-1.4s,%-1.4s,%-1.3s,%-1.3s,%-1.3s"),
+            snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR(":%-9s:UNIT.%-1.7s,%-1.6s,%-1.5s,%-1.5s,%-1.4s,%-1.5s,%-1.4s,%-1.4s,%-1.4s,%-1.4s,%-1.3s,%-1.3s,%-1.3s"),
                       aprsPacket->source,
                       aprsPacket->telemetries.telemetriesAnalog[0].unit,
                       aprsPacket->telemetries.telemetriesAnalog[1].unit,
@@ -323,36 +322,36 @@ void Aprs::appendTelemetries(AprsPacket *aprsPacket, char* aprsResult) {
             );
             break;
         case TelemetryEquation:
-            sprintf_P(&aprsResult[strlen(aprsResult)], PSTR(":%-9s:EQNS."), aprsPacket->source);
+            snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR(":%-9s:EQNS."), aprsPacket->source);
 
             for (uint8_t i = 0; i < MAX_TELEMETRY_ANALOG; i++) {
                 AprsTelemetryEquation equation = aprsPacket->telemetries.telemetriesAnalog[i].equation;
 
                 if (i > 0) {
-                    strcat_P(aprsResult, PSTR(","));
+                    strncat_P(aprsResult, PSTR(","), MAX_PACKET_LENGTH - strlen(aprsResult));
                 }
 
                 if (equation.a == 0 && equation.b == 0) {
                     equation.b = 1;
                 }
 
-                sprintf_P(&aprsResult[strlen(aprsResult)], formatDouble(equation.a), equation.a);
-                strcat_P(aprsResult, PSTR(","));
-                sprintf_P(&aprsResult[strlen(aprsResult)], formatDouble(equation.b), equation.b);
-                strcat_P(aprsResult, PSTR(","));
-                sprintf_P(&aprsResult[strlen(aprsResult)], formatDouble(equation.c), equation.c);
+                snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), formatDouble(equation.a), equation.a);
+                strncat_P(aprsResult, PSTR(","), MAX_PACKET_LENGTH - strlen(aprsResult));
+                snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), formatDouble(equation.b), equation.b);
+                strncat_P(aprsResult, PSTR(","), MAX_PACKET_LENGTH - strlen(aprsResult));
+                snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), formatDouble(equation.c), equation.c);
             }
 
             break;
         case TelemetryBitSense:
-            sprintf_P(&aprsResult[strlen(aprsResult)], PSTR(":%-9s:BITS."), aprsPacket->source);
+            snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR(":%-9s:BITS."), aprsPacket->source);
 
             for (const auto telemetry : aprsPacket->telemetries.telemetriesBoolean) {
-                strcat_P(aprsResult, telemetry.bitSense ? PSTR("1") : PSTR("0"));
+                strncat_P(aprsResult, telemetry.bitSense ? PSTR("1") : PSTR("0"), MAX_PACKET_LENGTH - strlen(aprsResult));
             }
 
             if (strlen(aprsPacket->telemetries.projectName)) {
-                sprintf_P(&aprsResult[strlen(aprsResult)], PSTR(",%.23s"), aprsPacket->telemetries.projectName);
+                snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR(",%.23s"), aprsPacket->telemetries.projectName);
             }
             break;
         default:
@@ -361,12 +360,12 @@ void Aprs::appendTelemetries(AprsPacket *aprsPacket, char* aprsResult) {
 }
 
 void Aprs::appendMessage(AprsMessage *message, char* aprsResult) {
-    sprintf_P(&aprsResult[strlen(aprsResult)], PSTR(":%-9s:"), message->destination);
+    snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR(":%-9s:"), message->destination);
 
     if (strlen(message->ackToReject)) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("rej%s "), message->ackToReject);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("rej%s "), message->ackToReject);
     } else if (strlen(message->ackToConfirm)) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("ack%s "), message->ackToConfirm);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("ack%s "), message->ackToConfirm);
     }
 
     trim(message->message);
@@ -376,73 +375,73 @@ void Aprs::appendMessage(AprsMessage *message, char* aprsResult) {
     }
 
     if (strlen(message->ackToAsk)) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("{%s"), message->ackToAsk);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("{%s"), message->ackToAsk);
     }
 }
 
 void Aprs::appendWeather(const AprsWeather *weather, char* aprsResult) {
     if (weather->useWindDirection) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%03d"), weather->windDirectionDegress);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%03d"), weather->windDirectionDegress);
     } else {
-        strcat_P(aprsResult, PSTR("..."));
+        strncat_P(aprsResult, PSTR("..."), MAX_PACKET_LENGTH - strlen(aprsResult));
     }
 
-    strcat_P(aprsResult, PSTR("/"));
+    strncat_P(aprsResult, PSTR("/"), MAX_PACKET_LENGTH - strlen(aprsResult));
     if (weather->useWindSpeed) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%03d"), weather->windSpeedMph);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%03d"), weather->windSpeedMph);
     } else {
-        strcat_P(aprsResult, PSTR("..."));
+        strncat_P(aprsResult, PSTR("..."), MAX_PACKET_LENGTH - strlen(aprsResult));
     }
 
-    strcat_P(aprsResult, PSTR("g"));
+    strncat_P(aprsResult, PSTR("g"), MAX_PACKET_LENGTH - strlen(aprsResult));
     if (weather->useGustSpeed) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%03d"), weather->gustSpeedMph);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%03d"), weather->gustSpeedMph);
     } else {
-        strcat_P(aprsResult, PSTR("..."));
+        strncat_P(aprsResult, PSTR("..."), MAX_PACKET_LENGTH - strlen(aprsResult));
     }
 
-    strcat_P(aprsResult, PSTR("t"));
+    strncat_P(aprsResult, PSTR("t"), MAX_PACKET_LENGTH - strlen(aprsResult));
     if (weather->useTemperature) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], weather->temperatureFahrenheit > 0 ? PSTR("%03d") : PSTR("%02d"), weather->temperatureFahrenheit);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), weather->temperatureFahrenheit > 0 ? PSTR("%03d") : PSTR("%02d"), weather->temperatureFahrenheit);
     } else {
-        strcat_P(aprsResult, PSTR("..."));
+        strncat_P(aprsResult, PSTR("..."), MAX_PACKET_LENGTH - strlen(aprsResult));
     }
 
-    strcat_P(aprsResult, PSTR("r"));
+    strncat_P(aprsResult, PSTR("r"), MAX_PACKET_LENGTH - strlen(aprsResult));
     if (weather->useRain1Hour) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%03d"), weather->rain1HourHundredthsOfAnInch);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%03d"), weather->rain1HourHundredthsOfAnInch);
     } else {
-        strcat_P(aprsResult, PSTR("..."));
+        strncat_P(aprsResult, PSTR("..."), MAX_PACKET_LENGTH - strlen(aprsResult));
     }
-    strcat_P(aprsResult, PSTR("p"));
+    strncat_P(aprsResult, PSTR("p"), MAX_PACKET_LENGTH - strlen(aprsResult));
     if (weather->useRain24Hour) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%03d"), weather->rain24HourHundredthsOfAnInch);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%03d"), weather->rain24HourHundredthsOfAnInch);
     } else {
-        strcat_P(aprsResult, PSTR("..."));
+        strncat_P(aprsResult, PSTR("..."), MAX_PACKET_LENGTH - strlen(aprsResult));
     }
 
-    strcat_P(aprsResult, PSTR("P"));
+    strncat_P(aprsResult, PSTR("P"), MAX_PACKET_LENGTH - strlen(aprsResult));
     if (weather->useRainSinceMidnight) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%03d"), weather->rain1HourHundredthsOfAnInch);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%03d"), weather->rain1HourHundredthsOfAnInch);
     } else {
-        strcat_P(aprsResult, PSTR("..."));
+        strncat_P(aprsResult, PSTR("..."), MAX_PACKET_LENGTH - strlen(aprsResult));
     }
 
-    strcat_P(aprsResult, PSTR("h"));
+    strncat_P(aprsResult, PSTR("h"), MAX_PACKET_LENGTH - strlen(aprsResult));
     if (weather->useHumidity && weather->humidity > 0) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%02d"), weather->humidity);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%02d"), weather->humidity);
     } else {
-        strcat_P(aprsResult, PSTR(".."));
+        strncat_P(aprsResult, PSTR(".."), MAX_PACKET_LENGTH - strlen(aprsResult));
     }
 
-    strcat_P(aprsResult, PSTR("b"));
+    strncat_P(aprsResult, PSTR("b"), MAX_PACKET_LENGTH - strlen(aprsResult));
     if (weather->usePressure) {
-        sprintf_P(&aprsResult[strlen(aprsResult)], PSTR("%05d"), weather->pressure * 10);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%05d"), weather->pressure * 10);
     } else {
-        strcat_P(aprsResult, PSTR("....."));
+        strncat_P(aprsResult, PSTR("....."), MAX_PACKET_LENGTH - strlen(aprsResult));
     }
 
-//    strcat_P(aprsResult, weather->device);
+//    strncat_P(aprsResult, weather->device, MAX_PACKET_LENGTH - strlen(aprsResult));
 }
 
 char* Aprs::ax25Base91Enc(char *destination, uint8_t width, uint32_t value) {
@@ -580,33 +579,33 @@ bool Aprs::canBeDigipeated(char* path, const char* myCall) {
     }
 
     const char *pathStart = path;
-    char buffer[CALLSIGN_LENGTH * MAX_PATH] = {};
+    char buffer[PATH_LENGTH] = {};
 
     char *hasStar = strstr_P(path, PSTR("*")); // Search for a star
     if (hasStar != nullptr) { // We got one so we set the start of or path to it
         strncpy(buffer, path, hasStar - path);
-        strcat_P(buffer, PSTR(","));
+        strncat_P(buffer, PSTR(","), PATH_LENGTH - strlen(buffer));
 
         pathStart = hasStar;
     }
 
     const char *hasWide = strstr_P(pathStart, PSTR("WIDE")); // Do we have a WIDE path after star ?
     if (hasWide != nullptr) {
-        const int wideN = atoi(hasWide + 3 + 1); // WIDE_  // Take the first number of WIDE
-        const int wideN2 = atoi(hasWide + 3 + 1 + 2); // WIDE_-_  // Take the second one
+        const int wideN = strtol(hasWide + 3 + 1, nullptr, 0); // WIDE_  // Take the first number of WIDE
+        const int wideN2 = strtol(hasWide + 3 + 1 + 2, nullptr, 0); // WIDE_-_  // Take the second one
         const char *rest = hasWide + 3 + 1 + 2 + 1; // We take the rest of the path (possible NULL)
 
         if (wideN2 == 1) { // If we have a WIDEN-1 : last of the chain
-            sprintf_P(&buffer[strlen(buffer)], PSTR("%s*"), myCall); // We remove WIDE
+            snprintf_P(buffer + strlen(buffer), PATH_LENGTH - strlen(buffer), PSTR("%s*"), myCall); // We remove WIDE
         } else { // We have a WIDEN-N : keep it but decrease N
-            sprintf_P(&buffer[strlen(buffer)], PSTR("%s*,WIDE%d-%d"), myCall, wideN, wideN2 - 1);
+            snprintf_P(buffer + strlen(buffer), PATH_LENGTH - strlen(buffer), PSTR("%s*,WIDE%d-%d"), myCall, wideN, wideN2 - 1);
         }
 
         if (rest[0] != '\0') {
             strcat(buffer, rest);
         }
 
-        strcpy(path, buffer);
+        strncpy(path, buffer, PATH_LENGTH);
 
         return true;
     }
@@ -615,13 +614,13 @@ bool Aprs::canBeDigipeated(char* path, const char* myCall) {
     if (hasCallsign != nullptr) {
         const char *rest = hasCallsign + strlen(myCall); // We take the rest of the path (possible NULL)
 
-        sprintf_P(&buffer[strlen(buffer)], PSTR("%s*"), myCall);
+        snprintf_P(buffer + strlen(buffer), PATH_LENGTH - strlen(buffer), PSTR("%s*"), myCall);
 
         if (rest[0] != '\0') {
             strcat(buffer, rest);
         }
 
-        strcpy(path, buffer);
+        strncpy(path, buffer, PATH_LENGTH);
 
         return true;
     }

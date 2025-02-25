@@ -10,16 +10,17 @@ void testOneFrame() {
     char encoded_packet[MAX_PACKET_LENGTH];
 
     strcpy(packet.source, "F4HVV-15");
+    strcpy(packet.path, "WIDE1-1");
     strcpy(packet.destination, "TEST");
-    strcpy(packet.comment, "TEST");
+//    strcpy(packet.comment, "TEST");
     packet.position = {
             '#',
             'L',
             45.325776,
-            5.6365808,
+            5.636580,
             0,
             0,
-            830 * 3.28,
+            830 * 3.28f,
             false,
             true,
             false
@@ -66,7 +67,7 @@ int main() {
             '/',
             40.12345,
             5.12345,
-            123,
+            123, // Course deg
             45, // 83 Km/h
             678 // 206 m
     };
