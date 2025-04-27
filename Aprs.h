@@ -1,5 +1,5 @@
-#ifndef CUBECELL_MONITORING_APRS_H
-#define CUBECELL_MONITORING_APRS_H
+#ifndef APRS_H
+#define APRS_H
 
 #define MAX_PACKET_LENGTH 256
 #define CALLSIGN_LENGTH 11
@@ -15,6 +15,7 @@
 #define WEATHER_DEVICE_LENGTH 4
 
 #include <cstdint>
+#include <cstdio>
 
 enum AprsPacketType { Unknown, Position, Message, Telemetry, TelemetryUnit, TelemetryLabel, TelemetryEquation, TelemetryBitSense, Weather, Item, Object, Status, RawContent };
 
@@ -42,7 +43,7 @@ enum Compression {
 };
 
 typedef struct {
-    uint16_t windDirectionDegress = 0;
+    uint16_t windDirectionDegrees = 0;
     uint16_t windSpeedMph = 0;
     uint16_t gustSpeedMph = 0;
     int16_t temperatureFahrenheit = 0;
@@ -71,9 +72,9 @@ typedef struct {
 } AprsTelemetryEquation;
 
 typedef struct {
-    char name[TELEMETRY_NAME_LENGTH]{};
+    char name[TELEMETRY_NAME_LENGTH + 1]{};
     double value = 0;
-    char unit[TELEMETRY_UNIT_LENGTH]{};
+    char unit[TELEMETRY_UNIT_LENGTH + 1]{};
     AprsTelemetryEquation equation{};
     bool bitSense = true;
 } AprsTelemetry;
@@ -82,7 +83,7 @@ typedef struct {
     AprsTelemetry telemetriesAnalog[MAX_TELEMETRY_ANALOG]{};
     AprsTelemetry telemetriesBoolean[MAX_TELEMETRY_BOOLEAN]{};
     uint16_t telemetrySequenceNumber = 0;
-    char projectName[TELEMETRY_PROJECT_NAME_LENGTH]{};
+    char projectName[TELEMETRY_PROJECT_NAME_LENGTH + 1]{};
     bool legacy = false;
 } AprsTelemetries;
 
@@ -100,17 +101,17 @@ typedef struct {
 } AprsPosition;
 
 typedef struct {
-    char destination[CALLSIGN_LENGTH]{};
-    char message[MESSAGE_LENGTH]{};
-    char ackToConfirm[ACK_MESSAGE_LENGTH]{}; // when RX
-    char ackToReject[ACK_MESSAGE_LENGTH]{}; // when RX
-    char ackToAsk[ACK_MESSAGE_LENGTH]{}; // when TX
-    char ackConfirmed[ACK_MESSAGE_LENGTH]{}; // when RX after TX
-    char ackRejected[ACK_MESSAGE_LENGTH]{}; // when RX after TX
+    char destination[CALLSIGN_LENGTH + 1]{};
+    char message[MESSAGE_LENGTH + 1]{};
+    char ackToConfirm[ACK_MESSAGE_LENGTH + 1]{}; // when RX
+    char ackToReject[ACK_MESSAGE_LENGTH + 1]{}; // when RX
+    char ackToAsk[ACK_MESSAGE_LENGTH + 1]{}; // when TX
+    char ackConfirmed[ACK_MESSAGE_LENGTH + 1]{}; // when RX after TX
+    char ackRejected[ACK_MESSAGE_LENGTH + 1]{}; // when RX after TX
 } AprsMessage;
 
 typedef struct {
-    char name[TELEMETRY_NAME_LENGTH];
+    char name[TELEMETRY_NAME_LENGTH + 1];
     bool active;
     uint8_t utcHour;
     uint8_t utcMinute;
@@ -118,35 +119,35 @@ typedef struct {
 } AprsObjectItem;
 
 typedef struct {
-    char destination[CALLSIGN_LENGTH]{};
-    char message[MESSAGE_LENGTH]{};
-    char ackToConfirm[ACK_MESSAGE_LENGTH]{}; // when RX
-    char ackConfirmed[ACK_MESSAGE_LENGTH]{}; // when RX after TX
-    char ackRejected[ACK_MESSAGE_LENGTH]{}; // when RX after TX
+    char destination[CALLSIGN_LENGTH + 1]{};
+    char message[MESSAGE_LENGTH + 1]{};
+    char ackToConfirm[ACK_MESSAGE_LENGTH + 1]{}; // when RX
+    char ackConfirmed[ACK_MESSAGE_LENGTH + 1]{}; // when RX after TX
+    char ackRejected[ACK_MESSAGE_LENGTH + 1]{}; // when RX after TX
 } AprsMessageLite;
 
 typedef struct {
-    char content[MAX_PACKET_LENGTH]{};
-    char source[CALLSIGN_LENGTH]{};
-    char destination[CALLSIGN_LENGTH]{};
-    char path[CALLSIGN_LENGTH * MAX_PATH]{};
+    char content[MAX_PACKET_LENGTH + 1]{};
+    char source[CALLSIGN_LENGTH + 1]{};
+    char destination[CALLSIGN_LENGTH + 1]{};
+    char path[CALLSIGN_LENGTH * MAX_PATH + 1]{};
     char comment[MESSAGE_LENGTH]{};
     AprsPosition position;
     AprsMessage message;
     AprsTelemetries telemetries;
     AprsWeather weather;
-    AprsObjectItem item;
+    AprsObjectItem item{};
     AprsPacketType type = Unknown;
 } AprsPacket;
 
 typedef struct {
-    char raw[MAX_PACKET_LENGTH]{};
-    char content[MAX_PACKET_LENGTH]{};
-    char source[CALLSIGN_LENGTH]{};
-    char destination[CALLSIGN_LENGTH]{};
-    char path[CALLSIGN_LENGTH * MAX_PATH]{};
-    char lastDigipeaterCallsignInPath[CALLSIGN_LENGTH]{};
-    uint8_t digipeaterCount;
+    char raw[MAX_PACKET_LENGTH + 1]{};
+    char content[MAX_PACKET_LENGTH + 1]{};
+    char source[CALLSIGN_LENGTH + 1]{};
+    char destination[CALLSIGN_LENGTH + 1]{};
+    char path[CALLSIGN_LENGTH * MAX_PATH + 1]{};
+    char lastDigipeaterCallsignInPath[CALLSIGN_LENGTH + 1]{};
+    uint8_t digipeaterCount{};
     AprsMessageLite message;
     AprsPacketType type = Unknown;
 } AprsPacketLite;
@@ -175,4 +176,4 @@ private:
     static uint8_t countCharOccurrences(const char *str, size_t n, char target);
 };
 
-#endif //CUBECELL_MONITORING_APRS_H
+#endif //APRS_H

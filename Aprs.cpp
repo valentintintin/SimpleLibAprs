@@ -381,7 +381,7 @@ void Aprs::appendMessage(AprsMessage *message, char* aprsResult) {
 
 void Aprs::appendWeather(const AprsWeather *weather, char* aprsResult) {
     if (weather->useWindDirection) {
-        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%03d"), weather->windDirectionDegress);
+        snprintf_P(aprsResult + strlen(aprsResult), MAX_PACKET_LENGTH - strlen(aprsResult), PSTR("%03d"), weather->windDirectionDegrees);
     } else {
         strncat_P(aprsResult, PSTR("..."), MAX_PACKET_LENGTH - strlen(aprsResult));
     }
@@ -527,7 +527,7 @@ void Aprs::reset(AprsPacket *aprsPacket) {
     aprsPacket->weather.rain1HourHundredthsOfAnInch = 0;
     aprsPacket->weather.rain24HourHundredthsOfAnInch = 0;
     aprsPacket->weather.rainSinceMidnightHundredthsOfAnInch = 0;
-    aprsPacket->weather.windDirectionDegress = 0;
+    aprsPacket->weather.windDirectionDegrees = 0;
     aprsPacket->weather.windSpeedMph = 0;
     aprsPacket->weather.gustSpeedMph = 0;
 
@@ -648,7 +648,7 @@ uint8_t Aprs::getLastDigipeater(const char *path, char* lastDigipeaterCallsign) 
     return 0;
 }
 
-uint8_t Aprs::countCharOccurrences(const char *str, size_t n, char target) {
+uint8_t Aprs::countCharOccurrences(const char *str, const size_t n, const char target) {
     uint8_t count = 0;
     for (size_t i = 0; i < n; i++) {
         if (str[i] == target) {
