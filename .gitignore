@@ -1,0 +1,6 @@
+.idea
+.pio/
+__pycache__/
+*.o
+*.elf
+*.hex

@@ -1,0 +1,27 @@
+{
+  "name": "SimpleLibAprs",
+  "version": "1.0.0",
+  "description": "Lightweight APRS packet encoder and decoder for embedded systems. Builds and parses APRS frames (compressed positions, messages with ACK/REJ, weather, telemetry, objects, items, status) with no dynamic memory allocation, plus WIDEn-N digipeater path handling. Wire formats follow the APRS Protocol Reference 1.0.1.",
+  "keywords": ["aprs", "ax25", "ham", "amateur-radio", "telemetry", "weather", "embedded"],
+  "authors": [
+    {
+      "name": "Valentin Saugnier",
+      "email": "valentin.saugnier@conductix.com",
+      "maintainer": true
+    }
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/F4HVV/SimpleLibAprs.git"
+  },
+  "license": "MIT",
+  "frameworks": "arduino",
+  "platforms": "*",
+  "headers": "Aprs.h",
+  "export": {
+    "include": ["src", "examples", "library.properties", "library.json", "LICENSE", "README.md", "CHANGELOG.md"]
+  },
+  "build": {
+    "srcDir": "src"
+  }
+}
