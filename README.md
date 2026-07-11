@@ -15,17 +15,23 @@ behaviour follows the *APRS Digipeater Algorithm* (WB2OSZ, APRS Foundation,
 ## Features
 
 - **Encode**: position reports — **compressed and uncompressed**, with or
-  without a **timestamp**, course/speed or altitude — text messages with
-  ACK/REJ handling, weather reports, telemetry (data + `PARM`/`UNIT`/`EQNS`/`BITS`
-  definitions, plus compressed base-91 telemetry in a position), objects, items,
-  status and raw frames.
+  without a **timestamp**, course/speed or altitude, **position ambiguity**
+  (APRS101 ch.6) — text messages with ACK/REJ handling, weather reports,
+  telemetry (data + `PARM`/`UNIT`/`EQNS`/`BITS` definitions, plus compressed
+  base-91 telemetry in a position), objects, items, status and raw frames.
 - **Decode**: a lightweight envelope parser (header, routing, packet type) plus
   on-demand typed decoders for **messages, positions** (compressed & uncompressed,
   with timestamp), **weather** (positioned & positionless), **telemetry** (T# data,
   the PARM/UNIT/EQNS/BITS definitions and the compressed base-91 form),
-  **objects/items** and **status**. You only allocate the payload you actually need.
+  **objects/items**, **status** and **query requests** (general or directed,
+  `?type?argument`). You only allocate the payload you actually need.
+  **Third-party headers** (`}`, e.g. a frame gated from APRS-IS onto RF by an
+  Internet Gateway) are unwrapped automatically, so the typed decoders see the
+  original station's packet transparently.
 - **Digipeater routing**: spec-accurate `WIDEn-N` handling, callsign/alias
   matching on the *first unused* address, and correct `*` marker movement.
+- **Maidenhead grid locator**: convert a latitude/longitude pair to/from a
+  2/4/6/8-character grid locator (`encodeGridLocator`/`decodeGridLocator`).
 - No heap, no exceptions, bounded writes (the output buffer is never overrun).
 
 ## Installation
@@ -83,6 +89,15 @@ if (aprs::decode("F4HVV-10>APDR16,WIDE1-1,F4HVV-9*::N0CALL-9 :Hi{42", pkt)) {
         aprs::decodeMessage(pkt, msg);   // msg.destination, msg.message, msg.ackToConfirm ...
     }
 }
+
+// A frame gated from APRS-IS onto RF carries a third-party header ('}');
+// it is unwrapped automatically — pkt.source/destination/path/content already
+// describe the ORIGINAL station, and pkt.gateway records who relayed it.
+if (aprs::decode("F4HVV-10>APRS,TCPIP*:}N0CALL-9>APDR16:=4519.92N/00537.15E>", pkt)) {
+    if (pkt.viaThirdParty) {
+        // pkt.gateway -> "F4HVV-10", pkt.source -> "N0CALL-9"
+    }
+}
 ```
 
 ### Digipeat a frame
@@ -122,8 +137,11 @@ aprs::canBeDigipeated(path, sizeof path, "KB1MKZ", opt);
 | `aprs::decodeTelemetry(lite, telemetry)` | Decode T#, PARM/UNIT/EQNS/BITS or compressed telemetry. |
 | `aprs::decodeObjectItem(lite, item, position)` | Decode an object/item: name, live/kill, timestamp, position. |
 | `aprs::decodeStatus(lite, out, outSize)` | Decode the status text (timestamp stripped). |
+| `aprs::decodeQuery(lite, query)` | Extract a query's addressee (if directed), type keyword and argument. |
 | `aprs::canBeDigipeated(path, size, myCall, opt)` | Apply the digipeater path algorithm. |
 | `aprs::lastDigipeater(path, out, size)` | Last station that relayed + hop count. |
+| `aprs::encodeGridLocator(lat, lon, out, size, pairs)` | Convert lat/lon to a Maidenhead grid locator. |
+| `aprs::decodeGridLocator(locator, &lat, &lon)` | Convert a Maidenhead grid locator back to lat/lon. |
 | `aprs::reset(...)` | Reset a `Packet` / `PacketLite` / `Message`. |
 
 All sizes and limits are exposed as `constexpr` constants (`aprs::kMaxPacketLength`,
@@ -145,12 +163,14 @@ the APRS Digipeater Algorithm document.
 
 ## Notes
 
-- Floating-point telemetry/equation values use `printf("%f")`. On AVR this
-  requires the floating-point `printf` variant to be linked; on ESP32/STM32/native
-  it works out of the box.
 - Weather reports are emitted in the **compressed** form: wind direction/speed
   are carried in the compressed-position `cs` bytes and the weather data starts
   at the gust field, as required by the spec.
+- `decodeQuery()` only extracts the query's fields. Like the digipeater
+  algorithm's duplicate suppression, deciding **whether and how to respond**
+  (e.g. which heard stations to list for `APRSD`, whether to answer a general
+  `APRS` query, rate-limiting) is application logic and stays out of the
+  library.
 
 ## License
 

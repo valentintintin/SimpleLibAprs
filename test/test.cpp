@@ -324,6 +324,99 @@ void testDecode() {
     aprs::decode("F4HVV-9>APDR16:=4519.92N/00537.15E[", nopath);
     checkStr(nopath.source, "F4HVV-9", "no-path: source");
     checkStr(nopath.destination, "APDR16", "no-path: destination");
+
+    // No path, but the PAYLOAD itself contains a comma right after the
+    // header colon (a bare T# telemetry report). The comma must not be
+    // mistaken for a path separator — the header ends at the first ':',
+    // full stop, regardless of what commas follow it.
+    aprs::PacketLite noPathCommaPayload;
+    aprs::decode("N0QBF>APRS:T#005,199,000,255,073,123,01101001", noPathCommaPayload);
+    checkStr(noPathCommaPayload.source, "N0QBF", "no-path+comma-payload: source");
+    checkStr(noPathCommaPayload.destination, "APRS", "no-path+comma-payload: destination not swallowed");
+    checkStr(noPathCommaPayload.path, "", "no-path+comma-payload: path stays empty");
+    checkStr(noPathCommaPayload.content, "T#005,199,000,255,073,123,01101001",
+             "no-path+comma-payload: content unaffected");
+
+    // Same, but WITH a real path this time: the payload's commas must not
+    // leak into the path either.
+    aprs::PacketLite pathCommaPayload;
+    aprs::decode("N0QBF>APRS,WIDE1-1:T#005,199,000,255,073,123,01101001", pathCommaPayload);
+    checkStr(pathCommaPayload.destination, "APRS", "path+comma-payload: destination");
+    checkStr(pathCommaPayload.path, "WIDE1-1", "path+comma-payload: path not extended into payload");
+}
+
+void testThirdPartyHeader() {
+    section("Third-party header (RF frame gated from APRS-IS)");
+
+    // An I-Gate ("F4HVV-10-IGATE") re-transmits a position report that
+    // originated from N0CALL-9 on APRS-IS.
+    aprs::PacketLite lite;
+    bool ok = aprs::decode(
+        "F4HVV-10>APRS,TCPIP*:}N0CALL-9>APDR16,WIDE1-1:=4519.92N/00537.15E>088/036", lite);
+    checkBool(ok, "decode returns true");
+    checkBool(lite.viaThirdParty, "flagged as third-party");
+    checkStr(lite.gateway, "F4HVV-10", "gateway callsign captured");
+    checkStr(lite.source, "N0CALL-9", "unwrapped: original source");
+    checkStr(lite.destination, "APDR16", "unwrapped: original destination");
+    checkStr(lite.path, "WIDE1-1", "unwrapped: original path");
+    checkInt((long) lite.type, (long) aprs::PacketType::Position, "unwrapped: type Position");
+
+    // Typed decoders must work transparently on the unwrapped packet.
+    aprs::Position pos;
+    checkBool(aprs::decodePosition(lite, pos), "decodePosition works on unwrapped packet");
+    checkNear(pos.latitude, 45.332, 0.001, "unwrapped: latitude");
+    checkNear(pos.longitude, 5.6192, 0.001, "unwrapped: longitude");
+
+    // A message wrapped the same way.
+    aprs::decode("F4HVV-10>APRS,TCPIP*:}N0CALL-9>APDR16::F4HVV-15 :hello{2", lite);
+    checkBool(lite.viaThirdParty, "message: flagged as third-party");
+    checkStr(lite.source, "N0CALL-9", "message: unwrapped source");
+    checkInt((long) lite.type, (long) aprs::PacketType::Message, "message: unwrapped type");
+    aprs::Message msg;
+    checkBool(aprs::decodeMessage(lite, msg), "decodeMessage works on unwrapped packet");
+    checkStr(msg.message, "hello", "message: unwrapped body");
+
+    // A normal (non-gated) frame must NOT be flagged.
+    aprs::decode("F4HVV-9>APDR16,WIDE1-1:=4519.92N/00537.15E[", lite);
+    checkBool(!lite.viaThirdParty, "plain frame: not flagged as third-party");
+    checkStr(lite.gateway, "", "plain frame: gateway left empty");
+
+    // Malformed inner frame: falls back to the raw (still-wrapped) content.
+    aprs::decode("F4HVV-10>APRS,TCPIP*:}garbage-no-colon", lite);
+    checkBool(!lite.viaThirdParty, "malformed wrapper: not flagged");
+    checkStr(lite.source, "F4HVV-10", "malformed wrapper: outer source kept");
+}
+
+void testPacketLiteCopySafety() {
+    section("PacketLite copy/assignment safety (content must not alias another instance)");
+
+    aprs::PacketLite a;
+    aprs::decode("F4HVV-9>APDR16:=4519.92N/00537.15E>088/036", a);
+
+    aprs::PacketLite b = a;  // copy-construct
+    checkBool(b.content >= b.raw && b.content < b.raw + sizeof(b.raw),
+             "copy-construct: content re-points into the copy's own raw");
+    checkStr(b.content, "=4519.92N/00537.15E>088/036", "copy-construct: content value preserved");
+
+    aprs::reset(a);
+    checkStr(b.content, "=4519.92N/00537.15E>088/036",
+            "copy-construct: content survives the original being reset");
+
+    aprs::PacketLite c;
+    c = a;  // copy-assign a reset (default-state) packet
+    checkStr(c.content, "", "copy-assign: default/reset state copies the empty content correctly");
+
+    // Copy-assigning a third-party-unwrapped packet must also re-point
+    // correctly and preserve the third-party-specific fields.
+    aprs::PacketLite d;
+    aprs::decode("F4HVV-10>APRS,TCPIP*:}N0CALL-9>APDR16:=4519.92N/00537.15E>088/036", d);
+    aprs::PacketLite e;
+    e = d;
+    checkBool(e.content >= e.raw && e.content < e.raw + sizeof(e.raw),
+             "copy-assign third-party: content re-points into the copy's own raw");
+    checkBool(e.viaThirdParty, "copy-assign third-party: viaThirdParty preserved");
+    checkStr(e.gateway, "F4HVV-10", "copy-assign third-party: gateway preserved");
+    checkStr(e.source, "N0CALL-9", "copy-assign third-party: unwrapped source preserved");
 }
 
 void testUncompressedEncode() {
@@ -412,6 +505,83 @@ void testDecodePosition() {
     aprs::decodePosition(lite, south);
     checkNear(south.latitude, -33.95, 0.001, "southern latitude is negative");
     checkNear(south.longitude, 151.20, 0.001, "eastern longitude");
+}
+
+void testPositionAmbiguity() {
+    section("Position ambiguity (APRS101 ch.6 worked example, TX + RX)");
+
+    aprs::Packet p;
+    std::strcpy(p.source, "TEST");
+    std::strcpy(p.destination, "APRS");
+    p.type = aprs::PacketType::Position;
+    p.position.compressed = false;
+    p.position.symbol = '>';
+    p.position.latitude = 49.05833;    // 49 03.50' N
+    p.position.longitude = -72.02917;  // 072 01.75' W
+
+    char out[aprs::kMaxPacketLength + 1];
+
+    p.position.ambiguity = 1;
+    encode(p, out);
+    checkContains(out, "=4903.5 N/07201.7 W>", "ambiguity 1: last decimal digit blanked");
+
+    p.position.ambiguity = 2;
+    encode(p, out);
+    checkContains(out, "=4903.  N/07201.  W>", "ambiguity 2: both decimal digits blanked");
+
+    p.position.ambiguity = 3;
+    encode(p, out);
+    checkContains(out, "=490 .  N/0720 .  W>", "ambiguity 3: minutes units digit also blanked");
+
+    p.position.ambiguity = 4;
+    encode(p, out);
+    checkContains(out, "=49  .  N/072  .  W>", "ambiguity 4: minutes tens digit also blanked");
+
+    aprs::PacketLite lite;
+    aprs::decode(out, lite);
+    aprs::Position decoded;
+    checkBool(aprs::decodePosition(lite, decoded), "ambiguity 4: decodePosition ok");
+    checkInt(decoded.ambiguity, 4, "ambiguity 4: detected level");
+    checkNear(decoded.latitude, 49.0, 0.001, "ambiguity 4: latitude rounds to degrees");
+    checkNear(decoded.longitude, -72.0, 0.001, "ambiguity 4: longitude rounds to degrees");
+
+    // No ambiguity: round-trips exactly as before.
+    p.position.ambiguity = 0;
+    encode(p, out);
+    checkContains(out, "=4903.50N/07201.75W>", "ambiguity 0: unchanged");
+}
+
+void testGridLocator() {
+    section("Maidenhead grid locator (encode/decode)");
+
+    char loc[9];
+    checkBool(aprs::encodeGridLocator(51.5, -1.0, loc, sizeof loc, 2), "encode 4-char locator ok");
+    checkStr(loc, "IO91", "encode: known reference IO91 (UK)");
+
+    double lat = 0, lon = 0;
+    checkBool(aprs::decodeGridLocator("IO91", lat, lon), "decode 4-char locator ok");
+    checkNear(lat, 51.5, 0.001, "decode: IO91 latitude (cell centre)");
+    checkNear(lon, -1.0, 0.001, "decode: IO91 longitude (cell centre)");
+
+    checkBool(aprs::decodeGridLocator("io91", lat, lon), "decode is case-insensitive");
+    checkNear(lat, 51.5, 0.001, "decode lowercase: latitude");
+
+    // 6-char round trip: precision should be within half a subsquare cell.
+    checkBool(aprs::encodeGridLocator(45.19, 5.72, loc, sizeof loc, 3), "encode 6-char locator ok");
+    checkBool(aprs::decodeGridLocator(loc, lat, lon), "decode 6-char locator ok");
+    checkNear(lat, 45.19, 1.0 / 24.0, "6-char round trip: latitude within subsquare");
+    checkNear(lon, 5.72, 2.0 / 24.0, "6-char round trip: longitude within subsquare");
+
+    checkBool(!aprs::decodeGridLocator("ZZ99", lat, lon), "decode rejects out-of-range field");
+    checkBool(!aprs::decodeGridLocator("ABC", lat, lon), "decode rejects odd-length input");
+    checkBool(!aprs::encodeGridLocator(91.0, 0.0, loc, sizeof loc), "encode rejects out-of-range latitude");
+    checkBool(!aprs::encodeGridLocator(0.0, 0.0, loc, 3), "encode rejects buffer too small");
+
+    // Exact +90/+180 edge: must clamp into the last cell, not overflow it.
+    checkBool(aprs::encodeGridLocator(90.0, 180.0, loc, sizeof loc, 4), "encode north-east pole corner ok");
+    checkStr(loc, "RR99xx99", "north-east corner clamps to the last cell of every pair");
+    checkBool(aprs::encodeGridLocator(-90.0, -180.0, loc, sizeof loc, 4), "encode south-west pole corner ok");
+    checkStr(loc, "AA00aa00", "south-west corner sits in the first cell of every pair");
 }
 
 void testDecodeWeather() {
@@ -506,6 +676,49 @@ void testDecodeObjectStatus() {
     char status2[64];
     aprs::decodeStatus(lite, status2, sizeof status2);
     checkStr(status2, "Net is up", "status: timestamp stripped");
+}
+
+void testDecodeQuery() {
+    section("Query decoding (RX)");
+
+    aprs::PacketLite lite;
+    aprs::Query q;
+
+    // General (broadcast) query, no argument.
+    aprs::decode("N0CALL>APRS:?APRS?", lite);
+    checkInt((long) lite.type, (long) aprs::PacketType::Query, "general: type Query");
+    checkBool(aprs::decodeQuery(lite, q), "general: decode ok");
+    checkStr(q.destination, "", "general: no addressee");
+    checkStr(q.type, "APRS", "general: query type");
+    checkStr(q.argument, "", "general: no argument");
+
+    // General query with a non-standard trailing argument.
+    aprs::decode("N0CALL>APRS:?WX? 38400", lite);
+    checkBool(aprs::decodeQuery(lite, q), "general with argument: decode ok");
+    checkStr(q.type, "WX", "general with argument: query type");
+    checkStr(q.argument, "38400", "general with argument: opaque argument text");
+
+    // Directed query (message envelope).
+    aprs::decode("N0CALL>APRS::F4HVV-9  :?APRSD?", lite);
+    checkInt((long) lite.type, (long) aprs::PacketType::Query, "directed: type Query");
+    checkBool(aprs::decodeQuery(lite, q), "directed: decode ok");
+    checkStr(q.destination, "F4HVV-9", "directed: addressee (trimmed)");
+    checkStr(q.type, "APRSD", "directed: query type");
+    checkStr(q.argument, "", "directed: no argument");
+
+    // A plain message containing '?' must NOT be misclassified as a query.
+    aprs::decode("N0CALL>APRS::F4HVV-9  :are you there?", lite);
+    checkInt((long) lite.type, (long) aprs::PacketType::Message, "plain message with '?' stays Message");
+
+    // A plain message merely containing a telemetry keyword must NOT be
+    // misclassified as telemetry metadata (the keyword must be anchored right
+    // after the addressee, followed by '.').
+    aprs::decode("N0CALL>APRS::F4HVV-9  :check UNIT 5 please", lite);
+    checkInt((long) lite.type, (long) aprs::PacketType::Message, "message containing 'UNIT' stays Message");
+    aprs::decode("N0CALL>APRS::F4HVV-9  :bad HABITS today", lite);
+    checkInt((long) lite.type, (long) aprs::PacketType::Message, "message containing 'HABITS' stays Message");
+    aprs::decode("N0CALL>APRS::F4HVV-9  :see report T#42 please", lite);
+    checkInt((long) lite.type, (long) aprs::PacketType::Message, "message containing 'T#' stays Message");
 }
 
 void testDecodeTelemetry() {
@@ -781,10 +994,15 @@ int main() {
     testTimestamp();
     testSpecExamples();
     testDecode();
+    testThirdPartyHeader();
+    testPacketLiteCopySafety();
     testDecodePosition();
+    testPositionAmbiguity();
+    testGridLocator();
     testDecodeWeather();
     testDecodeTelemetry();
     testDecodeObjectStatus();
+    testDecodeQuery();
     testDigipeating();
     testDigipeaterSpec();
     testLastHeard();

@@ -140,6 +140,15 @@ static void onFrameReceived(const char* raw) {
 static char lineBuffer[aprs::kMaxPacketLength + 1];
 static size_t lineLength = 0;
 
+// The canned demonstration frames only exist transiently (decode, evaluate,
+// move on), so they are kept in flash (F(...)) and copied one at a time into
+// lineBuffer (already needed for the live serial reader below) rather than
+// each living permanently in RAM as a plain string literal would.
+static void onFlashFrameReceived(const __FlashStringHelper* raw) {
+  strcpy_P(lineBuffer, (PGM_P) raw);
+  onFrameReceived(lineBuffer);
+}
+
 void setup() {
   Serial.begin(115200);
   while (!Serial) {
@@ -149,11 +158,11 @@ void setup() {
   Serial.println(MY_CALL);
 
   // Demonstration with a few canned frames:
-  onFrameReceived("N0CALL-9>APRS,WIDE2-2:=4519.92N/00537.15E>test");   // relayed
-  onFrameReceived("N0CALL-9>APRS,WIDE2-2:=4519.92N/00537.15E>test");   // dropped (dup)
-  onFrameReceived("F4HVV-1>APRS,WIDE2-2:hello");                        // dropped (our own)
-  onFrameReceived("N0CALL-9>APRS,F4ABC-1*:already used up");            // dropped (no unused hop)
-  onFrameReceived("N0CALL-9>APRS,EOC:emergency");                       // relayed via alias
+  onFlashFrameReceived(F("N0CALL-9>APRS,WIDE2-2:=4519.92N/00537.15E>test"));   // relayed
+  onFlashFrameReceived(F("N0CALL-9>APRS,WIDE2-2:=4519.92N/00537.15E>test"));   // dropped (dup)
+  onFlashFrameReceived(F("F4HVV-1>APRS,WIDE2-2:hello"));                        // dropped (our own)
+  onFlashFrameReceived(F("N0CALL-9>APRS,F4ABC-1*:already used up"));            // dropped (no unused hop)
+  onFlashFrameReceived(F("N0CALL-9>APRS,EOC:emergency"));                       // relayed via alias
 }
 
 void loop() {
