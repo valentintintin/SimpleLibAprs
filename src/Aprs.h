@@ -207,8 +207,6 @@ struct Position {
     double altitudeFeet = 0;        ///< Altitude in feet.
     bool compressed = true;         ///< Emit/expect the compressed position format.
     bool altitudeInComment = true;  ///< Emit altitude as /A= text instead of compressed.
-    bool withWeather = false;       ///< Append a weather report to the position.
-    bool withTelemetry = false;     ///< Append compressed telemetry to the position.
     Timestamp timestamp{};          ///< Optional timestamp (TX and RX).
     /// Position ambiguity level, 0-4 (APRS101 ch.6): blanks trailing minute
     /// digits to indicate reduced precision, e.g. level 2 turns "4903.50N"
@@ -232,7 +230,7 @@ struct Message {
 struct ObjectItem {
     char name[kTelemetryNameLength + 1]{};  ///< Object / item name.
     bool active = true;                     ///< Whether the object/item is live or killed.
-    uint8_t utcHour = 0;                    ///< Used by ::encode (HMS timestamp).
+    uint8_t utcHour = 0;                    ///< Used by ::encodeObjectItem (HMS timestamp).
     uint8_t utcMinute = 0;
     uint8_t utcSecond = 0;
     Timestamp timestamp{};                  ///< Filled by ::decodeObjectItem.
@@ -254,39 +252,6 @@ struct Query {
     char destination[kCallsignLength + 1]{};  ///< Addressee for a directed query; empty for a general query.
     char type[kQueryTypeLength + 1]{};        ///< Query keyword.
     char argument[kMessageLength + 1]{};      ///< Optional trailing text after the keyword, verbatim.
-};
-
-/**
- * @brief Complete packet to be encoded with ::encode.
- *
- * All five payload sub-structs (@ref position, @ref message, @ref telemetry,
- * @ref weather, @ref item) are plain members that ALWAYS exist side by side
- * in memory — only @ref type says which one is actually meaningful for a
- * given `Packet` instance; the others just sit there unused. This is a
- * deliberate simplicity-over-size tradeoff: a tagged union would let a
- * `Packet` be only as big as its LARGEST payload (`Telemetry`, currently)
- * instead of the SUM of all of them, but unions holding non-trivial types
- * (these structs all have in-class member initializers) need careful manual
- * construction/destruction bookkeeping in C++, which cuts against this
- * library's "keep it simple and obviously correct" design goal. On the
- * tightest targets (e.g. an ATmega328P Uno with 2 KB of RAM total), keep this
- * in mind: `sizeof(Packet)` is dominated by `Telemetry` (its 5 analog + 8
- * boolean channels) even when you're only ever encoding a `Position`.
- */
-struct Packet {
-    char source[kCallsignLength + 1]{};         ///< Source callsign (mandatory).
-    char destination[kCallsignLength + 1]{};    ///< Destination callsign (mandatory).
-    char path[kPathLength + 1]{};               ///< Optional digipeater path.
-    char comment[kMessageLength + 1]{};         ///< Optional free-text comment.
-    char content[kMaxPacketLength + 1]{};       ///< Raw content (used by PacketType::Raw).
-
-    Position position{};
-    Message message{};
-    Telemetry telemetry{};
-    Weather weather{};
-    ObjectItem item{};
-
-    PacketType type = PacketType::Unknown;
 };
 
 /**
@@ -336,19 +301,148 @@ struct PacketLite {
 // Public API
 // ---------------------------------------------------------------------------
 
+// Each encode function below builds the shared AX.25-style header
+// ("SOURCE>DEST[,PATH]:") itself, then only the ONE payload it takes as an
+// argument — unlike a single `encode(Packet, ...)` bundling all payload kinds
+// together, the caller only ever pays (in RAM, for the local it constructs)
+// for the payload it is actually sending. None of them write past @p outSize
+// bytes, and all NUL-terminate @p out (provided @p outSize > 0).
+
 /**
- * @brief Encode a packet into a textual APRS frame.
+ * @brief Encode a position report, optionally with weather and/or piggy-backed telemetry.
  *
- * The function never writes past @p outSize bytes and always NUL-terminates
- * @p out (provided @p outSize > 0).
+ * A weather report is just a position report whose symbol happens to be the
+ * weather-station glyph — passing @p weather is what turns this into one
+ * (APRS101 ch.12); there is no separate "weather" frame to build.
  *
- * @param packet   Packet to encode. Not modified.
- * @param out      Destination buffer.
- * @param outSize  Size of @p out in bytes (including room for the NUL).
- * @param written  Optional; receives the number of characters written.
+ * @param source       Source callsign (mandatory).
+ * @param destination  Destination callsign (mandatory).
+ * @param path         Optional digipeater path, or nullptr/empty for none.
+ * @param position     Position to encode.
+ * @param weather      Optional weather report to append; nullptr for none.
+ * @param telemetry    Optional compressed telemetry to piggy-back on the
+ *                     position; nullptr for none. Ignored when @p weather is
+ *                     set, or when @ref Telemetry::legacy is true (the legacy
+ *                     T# format can't be embedded in a position comment —
+ *                     send it separately with ::encodeTelemetryData).
+ * @param comment      Optional free-text comment appended after the position.
+ * @param out          Destination buffer.
+ * @param outSize      Size of @p out in bytes (including room for the NUL).
+ * @param written      Optional; receives the number of characters written.
  * @return Result::Ok on success, otherwise an error code.
  */
-Result encode(const Packet& packet, char* out, size_t outSize, size_t* written = nullptr);
+Result encodePosition(const char* source, const char* destination, const char* path,
+                      const Position& position, const Weather* weather, const Telemetry* telemetry,
+                      const char* comment, char* out, size_t outSize, size_t* written = nullptr);
+
+/**
+ * @brief Encode a text message, ACK or REJ (APRS101 ch.14).
+ *
+ * @ref Message::ackToReject / @ref Message::ackToConfirm (if set) produce a
+ * standalone "rejNN"/"ackNN" reply instead of the message body; otherwise the
+ * body is sent, optionally followed by "{NN" when @ref Message::ackToAsk
+ * requests an acknowledgement.
+ *
+ * @param source       Source callsign (mandatory).
+ * @param destination  Destination callsign (mandatory).
+ * @param path         Optional digipeater path, or nullptr/empty for none.
+ * @param message      Message to encode (addressee, body, ack fields).
+ * @param out          Destination buffer.
+ * @param outSize      Size of @p out in bytes (including room for the NUL).
+ * @param written      Optional; receives the number of characters written.
+ * @return Result::Ok on success, otherwise an error code.
+ */
+Result encodeMessage(const char* source, const char* destination, const char* path,
+                     const Message& message, char* out, size_t outSize, size_t* written = nullptr);
+
+/**
+ * @brief Encode a telemetry data report ("T#nnn,...", APRS101 ch.13).
+ *
+ * @param source       Source callsign (mandatory).
+ * @param destination  Destination callsign (mandatory).
+ * @param path         Optional digipeater path, or nullptr/empty for none.
+ * @param telemetry    Sequence number, analog values and boolean states to report.
+ * @param comment      Optional free-text comment appended after the report.
+ * @param out          Destination buffer.
+ * @param outSize      Size of @p out in bytes (including room for the NUL).
+ * @param written      Optional; receives the number of characters written.
+ * @return Result::Ok on success, otherwise an error code.
+ */
+Result encodeTelemetryData(const char* source, const char* destination, const char* path,
+                           const Telemetry& telemetry, const char* comment,
+                           char* out, size_t outSize, size_t* written = nullptr);
+
+/**
+ * @brief Encode a telemetry parameter-name (PARM) metadata message.
+ * Parameters are the same as ::encodeTelemetryData, minus @p comment (metadata
+ * messages carry no comment).
+ */
+Result encodeTelemetryLabel(const char* source, const char* destination, const char* path,
+                            const Telemetry& telemetry, char* out, size_t outSize, size_t* written = nullptr);
+
+/// @brief Encode a telemetry unit (UNIT) metadata message. @see ::encodeTelemetryLabel
+Result encodeTelemetryUnit(const char* source, const char* destination, const char* path,
+                          const Telemetry& telemetry, char* out, size_t outSize, size_t* written = nullptr);
+
+/// @brief Encode a telemetry equation (EQNS) metadata message. @see ::encodeTelemetryLabel
+Result encodeTelemetryEquation(const char* source, const char* destination, const char* path,
+                               const Telemetry& telemetry, char* out, size_t outSize, size_t* written = nullptr);
+
+/// @brief Encode a telemetry bit-sense (BITS) metadata message. @see ::encodeTelemetryLabel
+Result encodeTelemetryBitSense(const char* source, const char* destination, const char* path,
+                               const Telemetry& telemetry, char* out, size_t outSize, size_t* written = nullptr);
+
+/**
+ * @brief Encode an object or item report (APRS101 ch.11).
+ *
+ * @param source       Source callsign (mandatory).
+ * @param destination  Destination callsign (mandatory).
+ * @param path         Optional digipeater path, or nullptr/empty for none.
+ * @param type         PacketType::Object or PacketType::Item; anything else
+ *                     returns Result::UnsupportedType.
+ * @param item         Name, live/killed state and (objects only) HMS timestamp.
+ * @param position     Embedded position report.
+ * @param comment      Optional free-text comment appended after the position.
+ * @param out          Destination buffer.
+ * @param outSize      Size of @p out in bytes (including room for the NUL).
+ * @param written      Optional; receives the number of characters written.
+ * @return Result::Ok on success, otherwise an error code.
+ */
+Result encodeObjectItem(const char* source, const char* destination, const char* path,
+                        PacketType type, const ObjectItem& item, const Position& position,
+                        const char* comment, char* out, size_t outSize, size_t* written = nullptr);
+
+/**
+ * @brief Encode a status report (APRS101 ch.16).
+ *
+ * @param source       Source callsign (mandatory).
+ * @param destination  Destination callsign (mandatory).
+ * @param path         Optional digipeater path, or nullptr/empty for none.
+ * @param status       Status text (a leading timestamp, if any, is
+ *                     caller-supplied as part of this text; ::decodeStatus
+ *                     strips it back out on the receiving end).
+ * @param out          Destination buffer.
+ * @param outSize      Size of @p out in bytes (including room for the NUL).
+ * @param written      Optional; receives the number of characters written.
+ * @return Result::Ok on success, otherwise an error code.
+ */
+Result encodeStatus(const char* source, const char* destination, const char* path,
+                    const char* status, char* out, size_t outSize, size_t* written = nullptr);
+
+/**
+ * @brief Encode a raw, caller-provided payload verbatim after the AX.25 header.
+ *
+ * @param source       Source callsign (mandatory).
+ * @param destination  Destination callsign (mandatory).
+ * @param path         Optional digipeater path, or nullptr/empty for none.
+ * @param content      Payload appended as-is after the header's ':' separator.
+ * @param out          Destination buffer.
+ * @param outSize      Size of @p out in bytes (including room for the NUL).
+ * @param written      Optional; receives the number of characters written.
+ * @return Result::Ok on success, otherwise an error code.
+ */
+Result encodeRaw(const char* source, const char* destination, const char* path,
+                 const char* content, char* out, size_t outSize, size_t* written = nullptr);
 
 /**
  * @brief Parse the envelope of a textual APRS frame.
@@ -551,9 +645,6 @@ bool encodeGridLocator(double latitude, double longitude, char* out, size_t outS
  * @return true if @p locator was well-formed.
  */
 bool decodeGridLocator(const char* locator, double& latitude, double& longitude);
-
-/// Reset a Packet back to its default state.
-void reset(Packet& packet);
 
 /// Reset a PacketLite back to its default state.
 void reset(PacketLite& packet);

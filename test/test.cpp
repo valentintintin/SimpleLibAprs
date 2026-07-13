@@ -82,31 +82,23 @@ void section(const char* title) {
     std::printf("\n== %s ==\n", title);
 }
 
-// Encode helper returning the produced string by value-ish (into caller buffer).
-aprs::Result encode(aprs::Packet& p, char* out) {
-    return aprs::encode(p, out, aprs::kMaxPacketLength + 1);
-}
-
 // ---------------------------------------------------------------------------
 
 void testCompressedPosition() {
     section("Compressed position (spec example 49.5N, 72.75W)");
 
-    aprs::Packet p;
-    std::strcpy(p.source, "TEST");
-    std::strcpy(p.destination, "APRS");
-    p.type = aprs::PacketType::Position;
-    p.position.overlay = '/';
-    p.position.symbol = '>';
-    p.position.latitude = 49.5;
-    p.position.longitude = -72.75;
-    p.position.courseDeg = 0;
-    p.position.speedKnots = 0;
-    p.position.altitudeFeet = 0;
-    p.position.altitudeInComment = true;
+    aprs::Position position;
+    position.overlay = '/';
+    position.symbol = '>';
+    position.latitude = 49.5;
+    position.longitude = -72.75;
+    position.courseDeg = 0;
+    position.speedKnots = 0;
+    position.altitudeFeet = 0;
+    position.altitudeInComment = true;
 
     char out[aprs::kMaxPacketLength + 1];
-    encode(p, out);
+    aprs::encodePosition("TEST", "APRS", nullptr, position, nullptr, nullptr, nullptr, out, sizeof out);
 
     // Spec APRS101 ch.9 worked example: lat -> "5L!!", lon -> "<*e7".
     checkContains(out, "5L!!<*e7", "latitude/longitude base-91 match the spec example");
@@ -116,17 +108,14 @@ void testCompressedPosition() {
 void testPositionWithAltitude() {
     section("Position with /A= altitude");
 
-    aprs::Packet p;
-    std::strcpy(p.source, "F4HVV-15");
-    std::strcpy(p.destination, "APRS");
-    p.type = aprs::PacketType::Position;
-    p.position.latitude = 45.325776;
-    p.position.longitude = 5.636580;
-    p.position.altitudeFeet = 2722;  // ~830 m
-    p.position.altitudeInComment = true;
+    aprs::Position position;
+    position.latitude = 45.325776;
+    position.longitude = 5.636580;
+    position.altitudeFeet = 2722;  // ~830 m
+    position.altitudeInComment = true;
 
     char out[aprs::kMaxPacketLength + 1];
-    encode(p, out);
+    aprs::encodePosition("F4HVV-15", "APRS", nullptr, position, nullptr, nullptr, nullptr, out, sizeof out);
 
     checkContains(out, "/A=002722", "altitude rendered as /A=002722");
 }
@@ -134,23 +123,21 @@ void testPositionWithAltitude() {
 void testWeather() {
     section("Compressed weather report (spec-compliant)");
 
-    aprs::Packet p;
-    std::strcpy(p.source, "F4HVV-15");
-    std::strcpy(p.destination, "APRS");
-    p.type = aprs::PacketType::Weather;
-    p.position.latitude = 49.5;
-    p.position.longitude = -72.75;
-    p.weather.useGustSpeed = true;
-    p.weather.gustSpeedMph = 5;
-    p.weather.useTemperature = true;
-    p.weather.temperatureFahrenheit = 77;
-    p.weather.useHumidity = true;
-    p.weather.humidity = 50;
-    p.weather.usePressure = true;
-    p.weather.pressure = 990;
+    aprs::Position position;
+    position.latitude = 49.5;
+    position.longitude = -72.75;
+    aprs::Weather weather;
+    weather.useGustSpeed = true;
+    weather.gustSpeedMph = 5;
+    weather.useTemperature = true;
+    weather.temperatureFahrenheit = 77;
+    weather.useHumidity = true;
+    weather.humidity = 50;
+    weather.usePressure = true;
+    weather.pressure = 990;
 
     char out[aprs::kMaxPacketLength + 1];
-    encode(p, out);
+    aprs::encodePosition("F4HVV-15", "APRS", nullptr, position, &weather, nullptr, nullptr, out, sizeof out);
 
     // '_' weather symbol, then wind in cs bytes, then weather data from gust.
     checkContains(out, "5L!!<*e7_", "weather uses compressed position with '_' symbol");
@@ -162,70 +149,58 @@ void testWeather() {
 void testMessageAndAck() {
     section("Message, ACK and REJ");
 
-    aprs::Packet p;
-    std::strcpy(p.source, "N0CALL-9");
-    std::strcpy(p.destination, "APRS");
-    std::strcpy(p.message.destination, "NOCALL-4");
-    std::strcpy(p.message.message, "Hello, world!");
-    p.type = aprs::PacketType::Message;
+    aprs::Message message;
+    std::strcpy(message.destination, "NOCALL-4");
+    std::strcpy(message.message, "Hello, world!");
 
     char out[aprs::kMaxPacketLength + 1];
 
-    encode(p, out);
+    aprs::encodeMessage("N0CALL-9", "APRS", nullptr, message, out, sizeof out);
     checkStr(out, "N0CALL-9>APRS::NOCALL-4 :Hello, world!", "plain message frame");
 
-    std::strcpy(p.message.ackToAsk, "001");
-    encode(p, out);
+    std::strcpy(message.ackToAsk, "001");
+    aprs::encodeMessage("N0CALL-9", "APRS", nullptr, message, out, sizeof out);
     checkStr(out, "N0CALL-9>APRS::NOCALL-4 :Hello, world!{001", "message with line number {001");
 
-    aprs::Packet ackPkt;
-    std::strcpy(ackPkt.source, "N0CALL-9");
-    std::strcpy(ackPkt.destination, "APRS");
-    std::strcpy(ackPkt.message.destination, "NOCALL-4");
-    std::strcpy(ackPkt.message.ackToConfirm, "009");
-    std::strcpy(ackPkt.message.message, "this body must be ignored");
-    ackPkt.type = aprs::PacketType::Message;
-    encode(ackPkt, out);
+    aprs::Message ackMsg;
+    std::strcpy(ackMsg.destination, "NOCALL-4");
+    std::strcpy(ackMsg.ackToConfirm, "009");
+    std::strcpy(ackMsg.message, "this body must be ignored");
+    aprs::encodeMessage("N0CALL-9", "APRS", nullptr, ackMsg, out, sizeof out);
     checkStr(out, "N0CALL-9>APRS::NOCALL-4 :ack009", "ACK is a pure packet (no body, no trailing space)");
 
-    std::strcpy(ackPkt.message.ackToConfirm, "");
-    std::strcpy(ackPkt.message.ackToReject, "016");
-    encode(ackPkt, out);
+    std::strcpy(ackMsg.ackToConfirm, "");
+    std::strcpy(ackMsg.ackToReject, "016");
+    aprs::encodeMessage("N0CALL-9", "APRS", nullptr, ackMsg, out, sizeof out);
     checkStr(out, "N0CALL-9>APRS::NOCALL-4 :rej016", "REJ is a pure packet");
 }
 
 void testTelemetry() {
     section("Telemetry");
 
-    aprs::Packet p;
-    std::strcpy(p.source, "N0CALL-9");
-    std::strcpy(p.destination, "APRS");
-    p.telemetry.sequenceNumber = 7544;  // must wrap into a 3-digit field
-    p.telemetry.analog[0].value = 1472;
-    p.telemetry.analog[1].value = 1564;
-    std::strcpy(p.telemetry.analog[0].name, "A1");
-    std::strcpy(p.telemetry.analog[1].name, "A2");
-    std::strcpy(p.telemetry.analog[0].unit, "V");
-    p.telemetry.boolean[0].value = 1;
+    aprs::Telemetry telemetry;
+    telemetry.sequenceNumber = 7544;  // must wrap into a 3-digit field
+    telemetry.analog[0].value = 1472;
+    telemetry.analog[1].value = 1564;
+    std::strcpy(telemetry.analog[0].name, "A1");
+    std::strcpy(telemetry.analog[1].name, "A2");
+    std::strcpy(telemetry.analog[0].unit, "V");
+    telemetry.boolean[0].value = 1;
 
     char out[aprs::kMaxPacketLength + 1];
 
-    p.type = aprs::PacketType::Telemetry;
-    encode(p, out);
+    aprs::encodeTelemetryData("N0CALL-9", "APRS", nullptr, telemetry, nullptr, out, sizeof out);
     checkContains(out, ":T#544,", "T# sequence wrapped to 3 digits (544)");
     checkContains(out, "T#544,1472,1564,", "analog values present");
 
-    p.type = aprs::PacketType::TelemetryLabel;
-    encode(p, out);
+    aprs::encodeTelemetryLabel("N0CALL-9", "APRS", nullptr, telemetry, out, sizeof out);
     checkStr(out, "N0CALL-9>APRS::N0CALL-9 :PARM.A1,A2,,,,,,,,,,,", "PARM frame with 9-char addressee");
 
-    p.type = aprs::PacketType::TelemetryUnit;
-    encode(p, out);
+    aprs::encodeTelemetryUnit("N0CALL-9", "APRS", nullptr, telemetry, out, sizeof out);
     checkContains(out, ":N0CALL-9 :UNIT.V,", "UNIT frame");
 
-    p.type = aprs::PacketType::TelemetryBitSense;
-    std::strcpy(p.telemetry.projectName, "Demo");
-    encode(p, out);
+    std::strcpy(telemetry.projectName, "Demo");
+    aprs::encodeTelemetryBitSense("N0CALL-9", "APRS", nullptr, telemetry, out, sizeof out);
     checkContains(out, ":N0CALL-9 :BITS.", "BITS frame");
     checkContains(out, ",Demo", "BITS project name appended");
 }
@@ -233,61 +208,47 @@ void testTelemetry() {
 void testObjectAndItem() {
     section("Object and Item");
 
-    aprs::Packet p;
-    std::strcpy(p.source, "F4HVV-15");
-    std::strcpy(p.destination, "APRS");
-    std::strcpy(p.item.name, "OBJITM");
-    p.item.active = true;
-    p.item.utcHour = 12;
-    p.item.utcMinute = 34;
-    p.item.utcSecond = 56;
-    p.position.latitude = 49.5;
-    p.position.longitude = -72.75;
+    aprs::ObjectItem item;
+    std::strcpy(item.name, "OBJITM");
+    item.active = true;
+    item.utcHour = 12;
+    item.utcMinute = 34;
+    item.utcSecond = 56;
+    aprs::Position position;
+    position.latitude = 49.5;
+    position.longitude = -72.75;
 
     char out[aprs::kMaxPacketLength + 1];
 
-    p.type = aprs::PacketType::Object;
-    encode(p, out);
+    aprs::encodeObjectItem("F4HVV-15", "APRS", nullptr, aprs::PacketType::Object, item, position, nullptr, out, sizeof out);
     checkContains(out, ";OBJITM   *123456h", "Object: 9-char name, '*' live, HMS 'h' suffix");
 
-    p.type = aprs::PacketType::Item;
-    encode(p, out);
+    aprs::encodeObjectItem("F4HVV-15", "APRS", nullptr, aprs::PacketType::Item, item, position, nullptr, out, sizeof out);
     checkContains(out, ")OBJITM!", "Item: variable name, '!' live");
 }
 
 void testStatusAndRaw() {
     section("Status and Raw");
 
-    aprs::Packet p;
-    std::strcpy(p.source, "F4HVV-15");
-    std::strcpy(p.destination, "APRS");
-    std::strcpy(p.comment, "I'm good !");
-
     char out[aprs::kMaxPacketLength + 1];
 
-    p.type = aprs::PacketType::Status;
-    encode(p, out);
+    aprs::encodeStatus("F4HVV-15", "APRS", nullptr, "I'm good !", out, sizeof out);
     checkStr(out, "F4HVV-15>APRS:>I'm good !", "Status frame");
 
-    p.type = aprs::PacketType::Raw;
-    std::strcpy(p.content, "anything goes here");
-    encode(p, out);
+    aprs::encodeRaw("F4HVV-15", "APRS", nullptr, "anything goes here", out, sizeof out);
     checkStr(out, "F4HVV-15>APRS:anything goes here", "Raw content passed through");
 }
 
 void testEncodeErrors() {
     section("Encode error handling");
 
-    aprs::Packet p;
-    p.type = aprs::PacketType::Position;  // missing source/destination
+    aprs::Position position;  // missing source/destination
     char out[aprs::kMaxPacketLength + 1];
-    checkInt((long) aprs::encode(p, out, sizeof out), (long) aprs::Result::InvalidArgument,
-             "missing callsign -> InvalidArgument");
+    checkInt((long) aprs::encodePosition("", "", nullptr, position, nullptr, nullptr, nullptr, out, sizeof out),
+             (long) aprs::Result::InvalidArgument, "missing callsign -> InvalidArgument");
 
-    std::strcpy(p.source, "TEST");
-    std::strcpy(p.destination, "APRS");
     char tiny[8];
-    aprs::Result r = aprs::encode(p, tiny, sizeof tiny);
+    aprs::Result r = aprs::encodePosition("TEST", "APRS", nullptr, position, nullptr, nullptr, nullptr, tiny, sizeof tiny);
     checkInt((long) r, (long) aprs::Result::BufferTooSmall, "tiny buffer -> BufferTooSmall");
     checkBool(std::strlen(tiny) < sizeof tiny, "tiny buffer stays within bounds and NUL-terminated");
 }
@@ -422,45 +383,39 @@ void testPacketLiteCopySafety() {
 void testUncompressedEncode() {
     section("Uncompressed position encoding (TX)");
 
-    aprs::Packet p;
-    std::strcpy(p.source, "TEST");
-    std::strcpy(p.destination, "APRS");
-    p.type = aprs::PacketType::Position;
-    p.position.compressed = false;
-    p.position.overlay = '/';
-    p.position.symbol = '>';
-    p.position.latitude = 45.332;
-    p.position.longitude = 5.6192;
-    p.position.courseDeg = 88;
-    p.position.speedKnots = 36;
+    aprs::Position position;
+    position.compressed = false;
+    position.overlay = '/';
+    position.symbol = '>';
+    position.latitude = 45.332;
+    position.longitude = 5.6192;
+    position.courseDeg = 88;
+    position.speedKnots = 36;
 
     char out[aprs::kMaxPacketLength + 1];
-    encode(p, out);
+    aprs::encodePosition("TEST", "APRS", nullptr, position, nullptr, nullptr, nullptr, out, sizeof out);
     checkStr(out, "TEST>APRS:=4519.92N/00537.15E>088/036", "uncompressed position with course/speed");
 
-    p.position.courseDeg = 0;
-    p.position.speedKnots = 0;
-    p.position.altitudeFeet = 2722;
-    encode(p, out);
+    position.courseDeg = 0;
+    position.speedKnots = 0;
+    position.altitudeFeet = 2722;
+    aprs::encodePosition("TEST", "APRS", nullptr, position, nullptr, nullptr, nullptr, out, sizeof out);
     checkContains(out, "=4519.92N/00537.15E>/A=002722", "uncompressed position with altitude");
 }
 
 void testTimestamp() {
     section("Position timestamp (TX + RX)");
 
-    aprs::Packet p;
-    std::strcpy(p.source, "TEST");
-    std::strcpy(p.destination, "APRS");
-    p.type = aprs::PacketType::Position;
-    p.position.latitude = 49.5;
-    p.position.longitude = -72.75;
-    p.position.timestamp.type = aprs::TimestampType::Hms;
-    p.position.timestamp.hour = 12;
-    p.position.timestamp.minute = 34;
-    p.position.timestamp.second = 56;
+    aprs::Position position;
+    position.latitude = 49.5;
+    position.longitude = -72.75;
+    position.timestamp.type = aprs::TimestampType::Hms;
+    position.timestamp.hour = 12;
+    position.timestamp.minute = 34;
+    position.timestamp.second = 56;
 
     char out[aprs::kMaxPacketLength + 1];
-    encode(p, out);
+    aprs::encodePosition("TEST", "APRS", nullptr, position, nullptr, nullptr, nullptr, out, sizeof out);
     checkContains(out, ":@123456h/5L!!<*e7", "timestamped position uses @ + HHMMSSh");
 
     aprs::PacketLite lite;
@@ -510,31 +465,28 @@ void testDecodePosition() {
 void testPositionAmbiguity() {
     section("Position ambiguity (APRS101 ch.6 worked example, TX + RX)");
 
-    aprs::Packet p;
-    std::strcpy(p.source, "TEST");
-    std::strcpy(p.destination, "APRS");
-    p.type = aprs::PacketType::Position;
-    p.position.compressed = false;
-    p.position.symbol = '>';
-    p.position.latitude = 49.05833;    // 49 03.50' N
-    p.position.longitude = -72.02917;  // 072 01.75' W
+    aprs::Position position;
+    position.compressed = false;
+    position.symbol = '>';
+    position.latitude = 49.05833;    // 49 03.50' N
+    position.longitude = -72.02917;  // 072 01.75' W
 
     char out[aprs::kMaxPacketLength + 1];
 
-    p.position.ambiguity = 1;
-    encode(p, out);
+    position.ambiguity = 1;
+    aprs::encodePosition("TEST", "APRS", nullptr, position, nullptr, nullptr, nullptr, out, sizeof out);
     checkContains(out, "=4903.5 N/07201.7 W>", "ambiguity 1: last decimal digit blanked");
 
-    p.position.ambiguity = 2;
-    encode(p, out);
+    position.ambiguity = 2;
+    aprs::encodePosition("TEST", "APRS", nullptr, position, nullptr, nullptr, nullptr, out, sizeof out);
     checkContains(out, "=4903.  N/07201.  W>", "ambiguity 2: both decimal digits blanked");
 
-    p.position.ambiguity = 3;
-    encode(p, out);
+    position.ambiguity = 3;
+    aprs::encodePosition("TEST", "APRS", nullptr, position, nullptr, nullptr, nullptr, out, sizeof out);
     checkContains(out, "=490 .  N/0720 .  W>", "ambiguity 3: minutes units digit also blanked");
 
-    p.position.ambiguity = 4;
-    encode(p, out);
+    position.ambiguity = 4;
+    aprs::encodePosition("TEST", "APRS", nullptr, position, nullptr, nullptr, nullptr, out, sizeof out);
     checkContains(out, "=49  .  N/072  .  W>", "ambiguity 4: minutes tens digit also blanked");
 
     aprs::PacketLite lite;
@@ -546,8 +498,8 @@ void testPositionAmbiguity() {
     checkNear(decoded.longitude, -72.0, 0.001, "ambiguity 4: longitude rounds to degrees");
 
     // No ambiguity: round-trips exactly as before.
-    p.position.ambiguity = 0;
-    encode(p, out);
+    position.ambiguity = 0;
+    aprs::encodePosition("TEST", "APRS", nullptr, position, nullptr, nullptr, nullptr, out, sizeof out);
     checkContains(out, "=4903.50N/07201.75W>", "ambiguity 0: unchanged");
 }
 
@@ -587,20 +539,18 @@ void testGridLocator() {
 void testDecodeWeather() {
     section("Weather decoding (RX, round-trip)");
 
-    aprs::Packet p;
-    std::strcpy(p.source, "F4HVV-15");
-    std::strcpy(p.destination, "APRS");
-    p.type = aprs::PacketType::Weather;
-    p.position.latitude = 49.5;
-    p.position.longitude = -72.75;
-    p.weather.useGustSpeed = true;       p.weather.gustSpeedMph = 5;
-    p.weather.useTemperature = true;     p.weather.temperatureFahrenheit = 77;
-    p.weather.useRain1Hour = true;       p.weather.rain1HourHundredthsOfAnInch = 12;
-    p.weather.useHumidity = true;        p.weather.humidity = 50;
-    p.weather.usePressure = true;        p.weather.pressure = 990;
+    aprs::Position position;
+    position.latitude = 49.5;
+    position.longitude = -72.75;
+    aprs::Weather weather;
+    weather.useGustSpeed = true;       weather.gustSpeedMph = 5;
+    weather.useTemperature = true;     weather.temperatureFahrenheit = 77;
+    weather.useRain1Hour = true;       weather.rain1HourHundredthsOfAnInch = 12;
+    weather.useHumidity = true;        weather.humidity = 50;
+    weather.usePressure = true;        weather.pressure = 990;
 
     char out[aprs::kMaxPacketLength + 1];
-    encode(p, out);
+    aprs::encodePosition("F4HVV-15", "APRS", nullptr, position, &weather, nullptr, nullptr, out, sizeof out);
 
     aprs::PacketLite lite;
     aprs::decode(out, lite);
@@ -753,20 +703,17 @@ void testDecodeTelemetry() {
     checkNear(eqns.analog[1].equation.c, -32, 0.001, "EQNS: analog 2 coefficient c");
 
     // Compressed (base-91) telemetry carried inside a position report (round-trip).
-    aprs::Packet pp;
-    std::strcpy(pp.source, "N0CALL-9");
-    std::strcpy(pp.destination, "APRS");
-    pp.type = aprs::PacketType::Position;
-    pp.position.latitude = 49.5;
-    pp.position.longitude = -72.75;
-    pp.position.withTelemetry = true;
-    pp.telemetry.sequenceNumber = 3;
-    pp.telemetry.analog[0].value = 123;
-    pp.telemetry.analog[1].value = 456;
-    pp.telemetry.boolean[0].value = 1;
-    pp.telemetry.boolean[2].value = 1;
+    aprs::Position position;
+    position.latitude = 49.5;
+    position.longitude = -72.75;
+    aprs::Telemetry telemetry;
+    telemetry.sequenceNumber = 3;
+    telemetry.analog[0].value = 123;
+    telemetry.analog[1].value = 456;
+    telemetry.boolean[0].value = 1;
+    telemetry.boolean[2].value = 1;
     char out[aprs::kMaxPacketLength + 1];
-    encode(pp, out);
+    aprs::encodePosition("N0CALL-9", "APRS", nullptr, position, nullptr, &telemetry, nullptr, out, sizeof out);
     checkContains(out, "|", "compressed telemetry block present in position");
 
     aprs::PacketLite litp;
@@ -788,33 +735,27 @@ void testSpecExamples() {
     // ch.9 compressed position example: 49.5N, 72.75W, course 88, speed 36.2 kt,
     // car symbol '>'. Spec field: /5L!!<*e7>7P[ (we vary only the trailing
     // compression-origin byte, which is implementation-defined).
-    aprs::Packet p;
-    std::strcpy(p.source, "TEST");
-    std::strcpy(p.destination, "APRS");
-    p.type = aprs::PacketType::Position;
-    p.position.overlay = '/';
-    p.position.symbol = '>';
-    p.position.latitude = 49.5;
-    p.position.longitude = -72.75;
-    p.position.courseDeg = 88;
-    p.position.speedKnots = 36.2;
-    p.position.altitudeFeet = 0;
+    aprs::Position position;
+    position.overlay = '/';
+    position.symbol = '>';
+    position.latitude = 49.5;
+    position.longitude = -72.75;
+    position.courseDeg = 88;
+    position.speedKnots = 36.2;
+    position.altitudeFeet = 0;
     char out[aprs::kMaxPacketLength + 1];
-    encode(p, out);
+    aprs::encodePosition("TEST", "APRS", nullptr, position, nullptr, nullptr, nullptr, out, sizeof out);
     checkContains(out, "/5L!!<*e7>7P", "ch.9 compressed position/course/speed example");
 
     // ch.13 telemetry data example: T#005,199,000,255,073,123,01101001
-    aprs::Packet t;
-    std::strcpy(t.source, "N0QBF-11");
-    std::strcpy(t.destination, "APRS");
-    t.type = aprs::PacketType::Telemetry;
-    t.telemetry.legacy = true;
-    t.telemetry.sequenceNumber = 5;
+    aprs::Telemetry telemetry;
+    telemetry.legacy = true;
+    telemetry.sequenceNumber = 5;
     const double analog[5] = {199, 0, 255, 73, 123};
-    for (int i = 0; i < 5; ++i) t.telemetry.analog[i].value = analog[i];
+    for (int i = 0; i < 5; ++i) telemetry.analog[i].value = analog[i];
     const int bits[8] = {0, 1, 1, 0, 1, 0, 0, 1};  // -> "01101001"
-    for (int i = 0; i < 8; ++i) t.telemetry.boolean[i].value = bits[i];
-    encode(t, out);
+    for (int i = 0; i < 8; ++i) telemetry.boolean[i].value = bits[i];
+    aprs::encodeTelemetryData("N0QBF-11", "APRS", nullptr, telemetry, nullptr, out, sizeof out);
     checkContains(out, "T#005,199,000,255,073,123,01101001", "ch.13 telemetry data example");
 
     // ch.13 telemetry definition messages, addressee padded to 9 chars.

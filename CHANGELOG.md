@@ -25,6 +25,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the caller — no state, no response logic in the library.
 
 ### Changed
+- **Breaking:** the monolithic `Packet` struct and `aprs::encode(packet, ...)`
+  are gone, replaced by one function per payload kind — `encodePosition`,
+  `encodeMessage`, `encodeTelemetryData`/`Label`/`Unit`/`Equation`/`BitSense`,
+  `encodeObjectItem`, `encodeStatus`, `encodeRaw` — each taking only the source
+  callsign, destination, path and the ONE payload struct it actually needs,
+  mirroring the `decode()` + typed-decoder pattern already used on the RX
+  side. `Packet` bundled a `Position` + `Message` + `Telemetry` + `Weather` +
+  `ObjectItem` side by side so every encode call paid for the SUM of all five
+  regardless of which one was used: on an ATmega328P Uno (2 KB of RAM total),
+  `sizeof(Packet)` was 1244 bytes (61% of all RAM) for a single call, even
+  when only encoding a `Position` (30 bytes on its own). `Position::withWeather`
+  / `Position::withTelemetry` are also gone — `encodePosition` takes an
+  optional `Weather*`/`Telemetry*` instead, so there's no separate flag to
+  keep in sync with the pointer. All call sites (examples, tests) have been
+  updated; see the README's "Encode a position" section for the new pattern.
 - **Breaking:** `PacketLite::content` is now a `const char*` pointing into
   `PacketLite::raw` instead of its own `kMaxPacketLength+1` buffer, cutting
   `sizeof(PacketLite)` from 654 to 416 bytes. All decoders only ever read

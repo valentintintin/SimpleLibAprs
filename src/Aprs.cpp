@@ -780,7 +780,9 @@ void appendPositionDti(const Position& pos, Builder& b) {
 }
 
 void appendComment(const char* comment, Builder& b) {
-    bAppendTrimmed(b, comment);
+    if (comment != nullptr) {
+        bAppendTrimmed(b, comment);
+    }
 }
 
 /// Append the weather data string. Wind dir/speed are carried by the compressed
@@ -837,8 +839,7 @@ void appendWeather(const Weather& w, Builder& b) {
     }
 }
 
-void appendTelemetry(const Packet& packet, PacketType type, Builder& b) {
-    const Telemetry& t = packet.telemetry;
+void appendTelemetry(const char* source, const Telemetry& t, PacketType type, Builder& b) {
     char base[3];
 
     switch (type) {
@@ -908,20 +909,20 @@ void appendTelemetry(const Packet& packet, PacketType type, Builder& b) {
         case PacketType::TelemetryLabel:
             // Legacy per-field max lengths (APRS101 ch.13): analog 7,6,5,5,4; bits 5,4,3,3,3,2,2,2.
             bFormatP(b, PSTR(":%-9s:PARM.%.7s,%.6s,%.5s,%.5s,%.4s,%.5s,%.4s,%.3s,%.3s,%.3s,%.2s,%.2s,%.2s"),
-                     packet.source,
+                     source,
                      t.analog[0].name, t.analog[1].name, t.analog[2].name, t.analog[3].name, t.analog[4].name,
                      t.boolean[0].name, t.boolean[1].name, t.boolean[2].name, t.boolean[3].name,
                      t.boolean[4].name, t.boolean[5].name, t.boolean[6].name, t.boolean[7].name);
             break;
         case PacketType::TelemetryUnit:
             bFormatP(b, PSTR(":%-9s:UNIT.%.7s,%.6s,%.5s,%.5s,%.4s,%.5s,%.4s,%.3s,%.3s,%.3s,%.2s,%.2s,%.2s"),
-                     packet.source,
+                     source,
                      t.analog[0].unit, t.analog[1].unit, t.analog[2].unit, t.analog[3].unit, t.analog[4].unit,
                      t.boolean[0].unit, t.boolean[1].unit, t.boolean[2].unit, t.boolean[3].unit,
                      t.boolean[4].unit, t.boolean[5].unit, t.boolean[6].unit, t.boolean[7].unit);
             break;
         case PacketType::TelemetryEquation:
-            bFormatP(b, PSTR(":%-9s:EQNS."), packet.source);
+            bFormatP(b, PSTR(":%-9s:EQNS."), source);
             for (uint8_t i = 0; i < kMaxTelemetryAnalog; ++i) {
                 TelemetryEquation equation = t.analog[i].equation;
                 if (i > 0) {
@@ -938,7 +939,7 @@ void appendTelemetry(const Packet& packet, PacketType type, Builder& b) {
             }
             break;
         case PacketType::TelemetryBitSense:
-            bFormatP(b, PSTR(":%-9s:BITS."), packet.source);
+            bFormatP(b, PSTR(":%-9s:BITS."), source);
             for (const auto& channel : t.boolean) {
                 bAppendP(b, channel.bitSense ? PSTR("1") : PSTR("0"));
             }
@@ -1252,7 +1253,12 @@ int splitCsv(const char* s, char fields[][24], int maxFields) {
 // Public API
 // ---------------------------------------------------------------------------
 
-Result encode(const Packet& packet, char* out, size_t outSize, size_t* written) {
+namespace {
+
+/// Shared prologue for every encode function: validates arguments, resets
+/// @p out and writes the "SOURCE>DEST[,PATH]:" header into @p b.
+Result beginFrame(Builder& b, const char* source, const char* destination, const char* path,
+                   char* out, size_t outSize, size_t* written) {
     if (written != nullptr) {
         *written = 0;
     }
@@ -1260,82 +1266,187 @@ Result encode(const Packet& packet, char* out, size_t outSize, size_t* written) 
         return Result::InvalidArgument;
     }
     out[0] = '\0';
-    if (packet.source[0] == '\0' || packet.destination[0] == '\0') {
+    if (source == nullptr || source[0] == '\0' || destination == nullptr || destination[0] == '\0') {
         return Result::InvalidArgument;
     }
 
-    Builder b;
     bInit(b, out, outSize);
-
-    bFormatP(b, PSTR("%s>%s"), packet.source, packet.destination);
-    if (packet.path[0] != '\0') {
-        bFormatP(b, PSTR(",%s"), packet.path);
+    bFormatP(b, PSTR("%s>%s"), source, destination);
+    if (path != nullptr && path[0] != '\0') {
+        bFormatP(b, PSTR(",%s"), path);
     }
     bAppendP(b, PSTR(":"));
+    return Result::Ok;
+}
 
-    switch (packet.type) {
-        case PacketType::Position:
-            appendPositionDti(packet.position, b);
-            if (packet.position.withWeather) {
-                appendPosition(packet.position, &packet.weather, b);
-                appendWeather(packet.weather, b);
-            } else {
-                appendPosition(packet.position, nullptr, b);
-                if (packet.position.withTelemetry && !packet.telemetry.legacy) {
-                    appendTelemetry(packet, PacketType::Position, b);
-                }
-            }
-            appendComment(packet.comment, b);
-            break;
-        case PacketType::Weather:
-            appendPositionDti(packet.position, b);
-            appendPosition(packet.position, &packet.weather, b);
-            appendWeather(packet.weather, b);
-            appendComment(packet.comment, b);
-            break;
-        case PacketType::Message:
-            appendMessage(packet.message, b);
-            break;
-        case PacketType::Telemetry:
-        case PacketType::TelemetryLabel:
-        case PacketType::TelemetryUnit:
-        case PacketType::TelemetryEquation:
-        case PacketType::TelemetryBitSense:
-            appendTelemetry(packet, packet.type, b);
-            if (packet.type == PacketType::Telemetry) {
-                appendComment(packet.comment, b);
-            }
-            break;
-        case PacketType::Status:
-            bAppendP(b, PSTR(">"));
-            appendComment(packet.comment, b);
-            break;
-        case PacketType::Object:
-            // Name padded to 9 chars; HMS timestamp uses the 'h' (zulu) suffix.
-            bFormatP(b, PSTR(";%-9s%c%02u%02u%02uh"),
-                     packet.item.name, packet.item.active ? '*' : '_',
-                     (unsigned) packet.item.utcHour, (unsigned) packet.item.utcMinute,
-                     (unsigned) packet.item.utcSecond);
-            appendPosition(packet.position, nullptr, b);
-            appendComment(packet.comment, b);
-            break;
-        case PacketType::Item:
-            bFormatP(b, PSTR(")%s%c"), packet.item.name, packet.item.active ? '!' : '_');
-            appendPosition(packet.position, nullptr, b);
-            appendComment(packet.comment, b);
-            break;
-        case PacketType::Raw:
-            bAppend(b, packet.content);
-            break;
-        default:
-            return Result::UnsupportedType;
-    }
-
+/// Shared epilogue: trims @p out, reports the written length and turns a
+/// truncated write into Result::BufferTooSmall.
+Result endFrame(Builder& b, char* out, size_t* written) {
     trim(out);
     if (written != nullptr) {
         *written = strlen(out);
     }
     return b.overflow ? Result::BufferTooSmall : Result::Ok;
+}
+
+}  // namespace
+
+Result encodePosition(const char* source, const char* destination, const char* path,
+                      const Position& position, const Weather* weather, const Telemetry* telemetry,
+                      const char* comment, char* out, size_t outSize, size_t* written) {
+    Builder b;
+    const Result begin = beginFrame(b, source, destination, path, out, outSize, written);
+    if (begin != Result::Ok) {
+        return begin;
+    }
+
+    appendPositionDti(position, b);
+    if (weather != nullptr) {
+        appendPosition(position, weather, b);
+        appendWeather(*weather, b);
+    } else {
+        appendPosition(position, nullptr, b);
+        if (telemetry != nullptr && !telemetry->legacy) {
+            appendTelemetry(source, *telemetry, PacketType::Position, b);
+        }
+    }
+    appendComment(comment, b);
+
+    return endFrame(b, out, written);
+}
+
+Result encodeMessage(const char* source, const char* destination, const char* path,
+                     const Message& message, char* out, size_t outSize, size_t* written) {
+    Builder b;
+    const Result begin = beginFrame(b, source, destination, path, out, outSize, written);
+    if (begin != Result::Ok) {
+        return begin;
+    }
+
+    appendMessage(message, b);
+
+    return endFrame(b, out, written);
+}
+
+Result encodeTelemetryData(const char* source, const char* destination, const char* path,
+                           const Telemetry& telemetry, const char* comment,
+                           char* out, size_t outSize, size_t* written) {
+    Builder b;
+    const Result begin = beginFrame(b, source, destination, path, out, outSize, written);
+    if (begin != Result::Ok) {
+        return begin;
+    }
+
+    appendTelemetry(source, telemetry, PacketType::Telemetry, b);
+    appendComment(comment, b);
+
+    return endFrame(b, out, written);
+}
+
+Result encodeTelemetryLabel(const char* source, const char* destination, const char* path,
+                            const Telemetry& telemetry, char* out, size_t outSize, size_t* written) {
+    Builder b;
+    const Result begin = beginFrame(b, source, destination, path, out, outSize, written);
+    if (begin != Result::Ok) {
+        return begin;
+    }
+
+    appendTelemetry(source, telemetry, PacketType::TelemetryLabel, b);
+
+    return endFrame(b, out, written);
+}
+
+Result encodeTelemetryUnit(const char* source, const char* destination, const char* path,
+                          const Telemetry& telemetry, char* out, size_t outSize, size_t* written) {
+    Builder b;
+    const Result begin = beginFrame(b, source, destination, path, out, outSize, written);
+    if (begin != Result::Ok) {
+        return begin;
+    }
+
+    appendTelemetry(source, telemetry, PacketType::TelemetryUnit, b);
+
+    return endFrame(b, out, written);
+}
+
+Result encodeTelemetryEquation(const char* source, const char* destination, const char* path,
+                               const Telemetry& telemetry, char* out, size_t outSize, size_t* written) {
+    Builder b;
+    const Result begin = beginFrame(b, source, destination, path, out, outSize, written);
+    if (begin != Result::Ok) {
+        return begin;
+    }
+
+    appendTelemetry(source, telemetry, PacketType::TelemetryEquation, b);
+
+    return endFrame(b, out, written);
+}
+
+Result encodeTelemetryBitSense(const char* source, const char* destination, const char* path,
+                               const Telemetry& telemetry, char* out, size_t outSize, size_t* written) {
+    Builder b;
+    const Result begin = beginFrame(b, source, destination, path, out, outSize, written);
+    if (begin != Result::Ok) {
+        return begin;
+    }
+
+    appendTelemetry(source, telemetry, PacketType::TelemetryBitSense, b);
+
+    return endFrame(b, out, written);
+}
+
+Result encodeObjectItem(const char* source, const char* destination, const char* path,
+                        PacketType type, const ObjectItem& item, const Position& position,
+                        const char* comment, char* out, size_t outSize, size_t* written) {
+    Builder b;
+    const Result begin = beginFrame(b, source, destination, path, out, outSize, written);
+    if (begin != Result::Ok) {
+        return begin;
+    }
+
+    if (type == PacketType::Object) {
+        // Name padded to 9 chars; HMS timestamp uses the 'h' (zulu) suffix.
+        bFormatP(b, PSTR(";%-9s%c%02u%02u%02uh"),
+                 item.name, item.active ? '*' : '_',
+                 (unsigned) item.utcHour, (unsigned) item.utcMinute, (unsigned) item.utcSecond);
+    } else if (type == PacketType::Item) {
+        bFormatP(b, PSTR(")%s%c"), item.name, item.active ? '!' : '_');
+    } else {
+        return Result::UnsupportedType;
+    }
+    appendPosition(position, nullptr, b);
+    appendComment(comment, b);
+
+    return endFrame(b, out, written);
+}
+
+Result encodeStatus(const char* source, const char* destination, const char* path,
+                    const char* status, char* out, size_t outSize, size_t* written) {
+    Builder b;
+    const Result begin = beginFrame(b, source, destination, path, out, outSize, written);
+    if (begin != Result::Ok) {
+        return begin;
+    }
+
+    bAppendP(b, PSTR(">"));
+    appendComment(status, b);
+
+    return endFrame(b, out, written);
+}
+
+Result encodeRaw(const char* source, const char* destination, const char* path,
+                 const char* content, char* out, size_t outSize, size_t* written) {
+    Builder b;
+    const Result begin = beginFrame(b, source, destination, path, out, outSize, written);
+    if (begin != Result::Ok) {
+        return begin;
+    }
+
+    if (content != nullptr) {
+        bAppend(b, content);
+    }
+
+    return endFrame(b, out, written);
 }
 
 namespace {
@@ -2620,10 +2731,6 @@ PacketLite& PacketLite::operator=(const PacketLite& other) {
     type = other.type;
 
     return *this;
-}
-
-void reset(Packet& packet) {
-    packet = Packet{};
 }
 
 void reset(PacketLite& packet) {

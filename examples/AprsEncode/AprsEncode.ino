@@ -1,24 +1,26 @@
 /*
  * SimpleLibAprs - Encode example
  *
- * Builds one frame for every aprs::PacketType the library can encode, and
+ * Builds one frame for every APRS payload kind the library can encode, and
  * prints the resulting text to the serial port. Feed these frames to a TNC /
  * radio modem (e.g. via KISS) to actually transmit them.
  *
- * PacketType::Query has no encoder (see README: deciding whether/how to
- * respond to a query is application logic, so the library only decodes
- * them) and is therefore not shown here — see the AprsDecode example instead.
+ * Queries have no encoder (see README: deciding whether/how to respond to a
+ * query is application logic, so the library only decodes them) and are
+ * therefore not shown here — see the AprsDecode example instead.
  *
- * IMPORTANT (AVR/Uno RAM): each block below is wrapped in its own { } scope
- * so its aprs::Packet local goes out of scope — and its stack space is freed
- * for reuse — before the NEXT block's Packet is declared. aprs::Packet is
- * ~1.2 KB on AVR (it bundles a Position + Message + Telemetry + Weather +
- * ObjectItem side by side, see the struct's doc comment in Aprs.h); an Uno
- * only has 2 KB of RAM total, so declaring more than one or two of these at
- * once in the SAME scope reliably overflows the stack and silently corrupts
- * RAM (confirmed on real Uno hardware: with all ~13 Packets flattened into
- * one function, nothing is printed at all — the scoping below is not just
- * tidiness, it is required for this example to run on an Uno).
+ * IMPORTANT (AVR/Uno RAM): there is no single "packet" struct bundling every
+ * payload kind together — each `encodeXxx()` function below takes only the
+ * ONE payload struct it actually needs (e.g. `encodePosition` takes a
+ * `Position`, `encodeMessage` a `Message`), so a block only ever pays for
+ * what it declares. `Telemetry` (5 analog + 8 boolean channels, ~512 bytes on
+ * AVR) is still by far the biggest single struct in the library, which is why
+ * each block below is wrapped in its own { } scope: that local goes out of
+ * scope — and its stack space is freed for reuse — before the NEXT block's
+ * locals are declared, so at most one Telemetry (or Message, or Position)
+ * worth of stack is ever live at a time. An Uno only has 2 KB of RAM total,
+ * so flattening every block into one function would keep all of them live
+ * simultaneously and reliably overflow the stack, silently corrupting RAM.
  *
  * ALSO on AVR: every label is passed through F(...) (flash-resident) rather
  * than as a plain string literal — a plain literal is copied into RAM at
@@ -48,14 +50,12 @@
 // program's whole lifetime, while F(...) keeps it in flash and only copies
 // each byte out transiently as Serial.print reads it. With ~20 labels of
 // ~30 bytes each, that difference is the ~600 bytes that used to be the
-// single largest consumer of this sketch's static RAM on AVR — worth far
-// more than the couple of Packet-sized stack blocks the { } scoping saves.
-void printFrame(const __FlashStringHelper* label, const aprs::Packet& packet, char* frame, size_t frameSize) {
-  if (aprs::encode(packet, frame, frameSize) == aprs::Result::Ok) {
-    Serial.print(label);
+// single largest consumer of this sketch's static RAM on AVR.
+void printFrame(const __FlashStringHelper* label, aprs::Result result, const char* frame) {
+  Serial.print(label);
+  if (result == aprs::Result::Ok) {
     Serial.println(frame);
   } else {
-    Serial.print(label);
     Serial.println(F("(encode failed)"));
   }
 }
@@ -72,38 +72,34 @@ void setup() {
 
   // --- Compressed position, with course/speed/altitude ----------------------
   {
-    aprs::Packet beacon;
-    strcpy(beacon.source, "N0CALL-9");
-    strcpy(beacon.destination, "APRS");
-    strcpy(beacon.path, "WIDE1-1");
-    strcpy(beacon.comment, "SimpleLibAprs");
-    beacon.type = aprs::PacketType::Position;
-    beacon.position.latitude = 45.325776;
-    beacon.position.longitude = 5.636580;
-    beacon.position.symbol = '>';      // car
-    beacon.position.overlay = '/';
-    beacon.position.courseDeg = 90;
-    beacon.position.speedKnots = 25;
-    beacon.position.altitudeFeet = 2722;
-    printFrame(F("Position (compressed):        "), beacon, frame, sizeof frame);
+    aprs::Position position;
+    position.latitude = 45.325776;
+    position.longitude = 5.636580;
+    position.symbol = '>';      // car
+    position.overlay = '/';
+    position.courseDeg = 90;
+    position.speedKnots = 25;
+    position.altitudeFeet = 2722;
+    aprs::Result r = aprs::encodePosition("N0CALL-9", "APRS", "WIDE1-1", position,
+                                          nullptr, nullptr, "SimpleLibAprs", frame, sizeof frame);
+    printFrame(F("Position (compressed):        "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
   // --- Uncompressed position with a timestamp --------------------------------
   {
-    aprs::Packet timed;
-    strcpy(timed.source, "N0CALL-9");
-    strcpy(timed.destination, "APRS");
-    timed.type = aprs::PacketType::Position;
-    timed.position.compressed = false;
-    timed.position.latitude = 45.325776;
-    timed.position.longitude = 5.636580;
-    timed.position.symbol = '>';
-    timed.position.timestamp.type = aprs::TimestampType::DhmZulu;
-    timed.position.timestamp.day = 11;
-    timed.position.timestamp.hour = 14;
-    timed.position.timestamp.minute = 30;
-    printFrame(F("Position (timestamped):       "), timed, frame, sizeof frame);
+    aprs::Position position;
+    position.compressed = false;
+    position.latitude = 45.325776;
+    position.longitude = 5.636580;
+    position.symbol = '>';
+    position.timestamp.type = aprs::TimestampType::DhmZulu;
+    position.timestamp.day = 11;
+    position.timestamp.hour = 14;
+    position.timestamp.minute = 30;
+    aprs::Result r = aprs::encodePosition("N0CALL-9", "APRS", nullptr, position,
+                                          nullptr, nullptr, nullptr, frame, sizeof frame);
+    printFrame(F("Position (timestamped):       "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
@@ -111,60 +107,61 @@ void setup() {
   // Useful when the GPS fix is coarse, or to intentionally publish a less
   // precise location. Ambiguity only applies to the uncompressed format.
   {
-    aprs::Packet approx;
-    strcpy(approx.source, "N0CALL-9");
-    strcpy(approx.destination, "APRS");
-    approx.type = aprs::PacketType::Position;
-    approx.position.compressed = false;
-    approx.position.latitude = 45.325776;
-    approx.position.longitude = 5.636580;
-    approx.position.symbol = '>';
-    approx.position.ambiguity = 2;  // ~1 mile accuracy instead of ~60 feet
-    printFrame(F("Position (reduced precision): "), approx, frame, sizeof frame);
+    aprs::Position position;
+    position.compressed = false;
+    position.latitude = 45.325776;
+    position.longitude = 5.636580;
+    position.symbol = '>';
+    position.ambiguity = 2;  // ~1 mile accuracy instead of ~60 feet
+    aprs::Result r = aprs::encodePosition("N0CALL-9", "APRS", nullptr, position,
+                                          nullptr, nullptr, nullptr, frame, sizeof frame);
+    printFrame(F("Position (reduced precision): "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
   // --- Position with compressed telemetry riding along -----------------------
   // Saves an entire extra transmission: the GPS fix and a telemetry snapshot
-  // travel together in one frame instead of two (see PacketType::Telemetry
-  // below for the standalone form).
+  // travel together in one frame instead of two (see the standalone Telemetry
+  // data (T#) block below for the separate form).
   {
-    aprs::Packet posTelemetry;
-    strcpy(posTelemetry.source, "N0CALL-9");
-    strcpy(posTelemetry.destination, "APRS");
-    posTelemetry.type = aprs::PacketType::Position;
-    posTelemetry.position.latitude = 45.325776;
-    posTelemetry.position.longitude = 5.636580;
-    posTelemetry.position.symbol = '>';
-    posTelemetry.position.withTelemetry = true;
-    posTelemetry.telemetry.sequenceNumber = 5;
-    posTelemetry.telemetry.analog[0].value = 199;
-    posTelemetry.telemetry.analog[1].value = 42;
-    posTelemetry.telemetry.boolean[1].value = true;
-    printFrame(F("Position + telemetry:         "), posTelemetry, frame, sizeof frame);
+    aprs::Position position;
+    position.latitude = 45.325776;
+    position.longitude = 5.636580;
+    position.symbol = '>';
+    aprs::Telemetry telemetry;
+    telemetry.sequenceNumber = 5;
+    telemetry.analog[0].value = 199;
+    telemetry.analog[1].value = 42;
+    telemetry.boolean[1].value = true;
+    aprs::Result r = aprs::encodePosition("N0CALL-9", "APRS", nullptr, position,
+                                          nullptr, &telemetry, nullptr, frame, sizeof frame);
+    printFrame(F("Position + telemetry:         "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
   // === Weather ================================================================
+  // A weather report is just a position report whose symbol happens to be the
+  // weather-station glyph — passing a Weather to encodePosition is what turns
+  // it into one, there's no separate "weather" frame to build.
 
   {
-    aprs::Packet weather;
-    strcpy(weather.source, "N0CALL-9");
-    strcpy(weather.destination, "APRS");
-    weather.type = aprs::PacketType::Weather;
-    weather.position.latitude = 45.325776;
-    weather.position.longitude = 5.636580;
-    weather.weather.useTemperature = true;
-    weather.weather.temperatureFahrenheit = 72;
-    weather.weather.useHumidity = true;
-    weather.weather.humidity = 55;
-    weather.weather.useWindDirection = true;
-    weather.weather.windDirectionDegrees = 270;
-    weather.weather.useWindSpeed = true;
-    weather.weather.windSpeedMph = 12;
-    weather.weather.useGustSpeed = true;
-    weather.weather.gustSpeedMph = 18;
-    printFrame(F("Weather:                      "), weather, frame, sizeof frame);
+    aprs::Position position;
+    position.latitude = 45.325776;
+    position.longitude = 5.636580;
+    aprs::Weather weather;
+    weather.useTemperature = true;
+    weather.temperatureFahrenheit = 72;
+    weather.useHumidity = true;
+    weather.humidity = 55;
+    weather.useWindDirection = true;
+    weather.windDirectionDegrees = 270;
+    weather.useWindSpeed = true;
+    weather.windSpeedMph = 12;
+    weather.useGustSpeed = true;
+    weather.gustSpeedMph = 18;
+    aprs::Result r = aprs::encodePosition("N0CALL-9", "APRS", nullptr, position,
+                                          &weather, nullptr, nullptr, frame, sizeof frame);
+    printFrame(F("Weather:                      "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
@@ -172,14 +169,12 @@ void setup() {
 
   // --- Plain message, asking the recipient to acknowledge line 001 ----------
   {
-    aprs::Packet message;
-    strcpy(message.source, "N0CALL-9");
-    strcpy(message.destination, "APRS");
-    strcpy(message.message.destination, "F4HVV-15");
-    strcpy(message.message.message, "Hello from Arduino!");
-    strcpy(message.message.ackToAsk, "001");
-    message.type = aprs::PacketType::Message;
-    printFrame(F("Message:                      "), message, frame, sizeof frame);
+    aprs::Message message;
+    strcpy(message.destination, "F4HVV-15");
+    strcpy(message.message, "Hello from Arduino!");
+    strcpy(message.ackToAsk, "001");
+    aprs::Result r = aprs::encodeMessage("N0CALL-9", "APRS", nullptr, message, frame, sizeof frame);
+    printFrame(F("Message:                      "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
@@ -189,24 +184,20 @@ void setup() {
   // RX side of this same field. An ack/rej is a standalone packet: no body,
   // no trailing space (see appendMessage in Aprs.cpp for why).
   {
-    aprs::Packet ackReply;
-    strcpy(ackReply.source, "N0CALL-9");
-    strcpy(ackReply.destination, "APRS");
-    ackReply.type = aprs::PacketType::Message;
-    strcpy(ackReply.message.destination, "F4HVV-15");
-    strcpy(ackReply.message.ackToConfirm, "009");
-    printFrame(F("Message ACK:                  "), ackReply, frame, sizeof frame);
+    aprs::Message message;
+    strcpy(message.destination, "F4HVV-15");
+    strcpy(message.ackToConfirm, "009");
+    aprs::Result r = aprs::encodeMessage("N0CALL-9", "APRS", nullptr, message, frame, sizeof frame);
+    printFrame(F("Message ACK:                  "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
   {
-    aprs::Packet rejReply;
-    strcpy(rejReply.source, "N0CALL-9");
-    strcpy(rejReply.destination, "APRS");
-    rejReply.type = aprs::PacketType::Message;
-    strcpy(rejReply.message.destination, "F4HVV-15");
-    strcpy(rejReply.message.ackToReject, "016");
-    printFrame(F("Message REJ:                  "), rejReply, frame, sizeof frame);
+    aprs::Message message;
+    strcpy(message.destination, "F4HVV-15");
+    strcpy(message.ackToReject, "016");
+    aprs::Result r = aprs::encodeMessage("N0CALL-9", "APRS", nullptr, message, frame, sizeof frame);
+    printFrame(F("Message REJ:                  "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
@@ -217,109 +208,99 @@ void setup() {
   // that tell the receiving station what those values MEAN and how to
   // convert/display them.
   {
-    aprs::Packet telemetry;
-    strcpy(telemetry.source, "N0CALL-9");
-    strcpy(telemetry.destination, "APRS");
-    telemetry.telemetry.sequenceNumber = 5;
-    telemetry.telemetry.legacy = true;  // 3-digit legacy analog format (000-255)
-    telemetry.telemetry.analog[0].value = 199;  // e.g. battery voltage, raw ADC count
-    telemetry.telemetry.analog[1].value = 0;
-    telemetry.telemetry.analog[2].value = 255;
-    telemetry.telemetry.analog[3].value = 73;
-    telemetry.telemetry.analog[4].value = 123;
-    telemetry.telemetry.boolean[1].value = true;  // e.g. "door open"
-    strcpy(telemetry.telemetry.analog[0].name, "Battery");
-    strcpy(telemetry.telemetry.analog[0].unit, "V");
-    telemetry.telemetry.analog[0].equation.a = 0;
-    telemetry.telemetry.analog[0].equation.b = 0.1;  // raw ADC count * 0.1 = volts
-    telemetry.telemetry.analog[0].equation.c = 0;
-    strcpy(telemetry.telemetry.boolean[1].name, "Door");
+    aprs::Telemetry telemetry;
+    telemetry.sequenceNumber = 5;
+    telemetry.legacy = true;  // 3-digit legacy analog format (000-255)
+    telemetry.analog[0].value = 199;  // e.g. battery voltage, raw ADC count
+    telemetry.analog[1].value = 0;
+    telemetry.analog[2].value = 255;
+    telemetry.analog[3].value = 73;
+    telemetry.analog[4].value = 123;
+    telemetry.boolean[1].value = true;  // e.g. "door open"
+    strcpy(telemetry.analog[0].name, "Battery");
+    strcpy(telemetry.analog[0].unit, "V");
+    telemetry.analog[0].equation.a = 0;
+    telemetry.analog[0].equation.b = 0.1;  // raw ADC count * 0.1 = volts
+    telemetry.analog[0].equation.c = 0;
+    strcpy(telemetry.boolean[1].name, "Door");
     // PARM/UNIT truncate each field to a legacy per-position max length defined
     // by APRS101 ch.13 (analog: 7,6,5,5,4 chars; bits: 5,4,3,3,3,2,2,2 chars) —
     // boolean channel index 1 only gets 4 characters, so keep this short.
-    strcpy(telemetry.telemetry.boolean[1].unit, "On");
-    telemetry.telemetry.boolean[0].bitSense = false;  // show a mix of 0/1 in BITS below
-    strcpy(telemetry.telemetry.projectName, "Demo");
+    strcpy(telemetry.boolean[1].unit, "On");
+    telemetry.boolean[0].bitSense = false;  // show a mix of 0/1 in BITS below
+    strcpy(telemetry.projectName, "Demo");
 
-    telemetry.type = aprs::PacketType::Telemetry;
-    printFrame(F("Telemetry data (T#):          "), telemetry, frame, sizeof frame);
+    aprs::Result r = aprs::encodeTelemetryData("N0CALL-9", "APRS", nullptr, telemetry, nullptr, frame, sizeof frame);
+    printFrame(F("Telemetry data (T#):          "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
 
-    telemetry.type = aprs::PacketType::TelemetryLabel;
-    printFrame(F("Telemetry names (PARM):       "), telemetry, frame, sizeof frame);
+    r = aprs::encodeTelemetryLabel("N0CALL-9", "APRS", nullptr, telemetry, frame, sizeof frame);
+    printFrame(F("Telemetry names (PARM):       "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
 
-    telemetry.type = aprs::PacketType::TelemetryUnit;
-    printFrame(F("Telemetry units (UNIT):       "), telemetry, frame, sizeof frame);
+    r = aprs::encodeTelemetryUnit("N0CALL-9", "APRS", nullptr, telemetry, frame, sizeof frame);
+    printFrame(F("Telemetry units (UNIT):       "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
 
-    telemetry.type = aprs::PacketType::TelemetryEquation;
-    printFrame(F("Telemetry equations (EQNS):   "), telemetry, frame, sizeof frame);
+    r = aprs::encodeTelemetryEquation("N0CALL-9", "APRS", nullptr, telemetry, frame, sizeof frame);
+    printFrame(F("Telemetry equations (EQNS):   "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
 
-    telemetry.type = aprs::PacketType::TelemetryBitSense;
-    printFrame(F("Telemetry bit sense (BITS):   "), telemetry, frame, sizeof frame);
+    r = aprs::encodeTelemetryBitSense("N0CALL-9", "APRS", nullptr, telemetry, frame, sizeof frame);
+    printFrame(F("Telemetry bit sense (BITS):   "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
   // === Object / Item ================================================================
 
   {
-    aprs::Packet object;
-    strcpy(object.source, "N0CALL-9");
-    strcpy(object.destination, "APRS");
-    object.type = aprs::PacketType::Object;
-    strcpy(object.item.name, "LEADER");
-    object.item.active = true;
-    object.item.utcHour = 9;
-    object.item.utcMinute = 23;
-    object.item.utcSecond = 45;
-    object.position.latitude = 49.058333;
-    object.position.longitude = -72.029167;
-    object.position.symbol = '>';
-    printFrame(F("Object:                       "), object, frame, sizeof frame);
+    aprs::ObjectItem item;
+    strcpy(item.name, "LEADER");
+    item.active = true;
+    item.utcHour = 9;
+    item.utcMinute = 23;
+    item.utcSecond = 45;
+    aprs::Position position;
+    position.latitude = 49.058333;
+    position.longitude = -72.029167;
+    position.symbol = '>';
+    aprs::Result r = aprs::encodeObjectItem("N0CALL-9", "APRS", nullptr, aprs::PacketType::Object,
+                                            item, position, nullptr, frame, sizeof frame);
+    printFrame(F("Object:                       "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
   {
-    aprs::Packet item;
-    strcpy(item.source, "N0CALL-9");
-    strcpy(item.destination, "APRS");
-    item.type = aprs::PacketType::Item;
-    strcpy(item.item.name, "ABC");
-    item.item.active = true;
-    item.position.latitude = 49.058333;
-    item.position.longitude = -72.029167;
-    item.position.symbol = '>';
-    printFrame(F("Item:                         "), item, frame, sizeof frame);
+    aprs::ObjectItem item;
+    strcpy(item.name, "ABC");
+    item.active = true;
+    aprs::Position position;
+    position.latitude = 49.058333;
+    position.longitude = -72.029167;
+    position.symbol = '>';
+    aprs::Result r = aprs::encodeObjectItem("N0CALL-9", "APRS", nullptr, aprs::PacketType::Item,
+                                            item, position, nullptr, frame, sizeof frame);
+    printFrame(F("Item:                         "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
   // === Status ================================================================
 
   {
-    aprs::Packet status;
-    strcpy(status.source, "N0CALL-9");
-    strcpy(status.destination, "APRS");
-    status.type = aprs::PacketType::Status;
-    strcpy(status.comment, "Net control tonight");
-    printFrame(F("Status:                       "), status, frame, sizeof frame);
+    aprs::Result r = aprs::encodeStatus("N0CALL-9", "APRS", nullptr, "Net control tonight", frame, sizeof frame);
+    printFrame(F("Status:                       "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
   // === Raw (caller-provided content, emitted verbatim) ==========================
 
   {
-    aprs::Packet raw;
-    strcpy(raw.source, "N0CALL-9");
-    strcpy(raw.destination, "APRS");
-    raw.type = aprs::PacketType::Raw;
-    strcpy(raw.content, "anything goes here");
-    printFrame(F("Raw:                          "), raw, frame, sizeof frame);
+    aprs::Result r = aprs::encodeRaw("N0CALL-9", "APRS", nullptr, "anything goes here", frame, sizeof frame);
+    printFrame(F("Raw:                          "), r, frame);
     delay(10);  // let a slow USB-serial adapter drain the TX buffer before the next burst
   }
 
-  // === Maidenhead grid locator (standalone utility, no Packet involved) ==========
+  // === Maidenhead grid locator (standalone utility) ==============================
   char locator[7];  // 6 characters + NUL
   if (aprs::encodeGridLocator(45.325776, 5.636580, locator, sizeof locator)) {
     Serial.print(F("Grid locator:                  "));

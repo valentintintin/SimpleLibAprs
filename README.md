@@ -53,26 +53,38 @@ Copy this folder into your Arduino `libraries/` directory, then
 
 ### Encode a position
 
+There is no single "packet" struct bundling every payload kind together —
+each `encodeXxx()` function takes only the ONE payload it needs (here a
+`Position`), so you only ever pay, in stack RAM, for what you're actually
+sending:
+
 ```cpp
 #include <Aprs.h>
 
 char frame[aprs::kMaxPacketLength + 1];
 
-aprs::Packet p;
-strcpy(p.source, "N0CALL-9");
-strcpy(p.destination, "APRS");
-strcpy(p.path, "WIDE1-1");
-p.type = aprs::PacketType::Position;
-p.position.latitude = 45.325776;
-p.position.longitude = 5.636580;
-p.position.symbol = '>';            // car
-p.position.altitudeFeet = 2722;
+aprs::Position position;
+position.latitude = 45.325776;
+position.longitude = 5.636580;
+position.symbol = '>';            // car
+position.altitudeFeet = 2722;
 
 size_t written = 0;
-if (aprs::encode(p, frame, sizeof frame, &written) == aprs::Result::Ok) {
+aprs::Result r = aprs::encodePosition("N0CALL-9", "APRS", "WIDE1-1", position,
+                                      nullptr, nullptr, nullptr, frame, sizeof frame, &written);
+if (r == aprs::Result::Ok) {
     // frame -> "N0CALL-9>APRS,WIDE1-1:=/..."
 }
 ```
+
+The two `nullptr`s are an optional `Weather*` (pass one to turn this into a
+weather report — APRS doesn't have a separate "weather" frame, it's just a
+position report with the weather-station symbol) and an optional
+`Telemetry*` (piggy-backs compressed telemetry onto the position); the last
+one is the optional free-text comment. `encodeMessage`,
+`encodeTelemetryData`/`Label`/`Unit`/`Equation`/`BitSense`, `encodeObjectItem`,
+`encodeStatus` and `encodeRaw` follow the same pattern for the other payload
+kinds — see [Aprs.h](src/Aprs.h) for the full, documented signatures.
 
 ### Decode a frame
 
@@ -129,7 +141,13 @@ aprs::canBeDigipeated(path, sizeof path, "KB1MKZ", opt);
 
 | Function | Purpose |
 |----------|---------|
-| `aprs::encode(packet, out, outSize, &written)` | Build a frame. Returns `aprs::Result`. |
+| `aprs::encodePosition(source, dest, path, position, weather, telemetry, comment, out, outSize, &written)` | Build a position report (optionally weather and/or piggy-backed telemetry). |
+| `aprs::encodeMessage(source, dest, path, message, out, outSize, &written)` | Build a text message, ACK or REJ. |
+| `aprs::encodeTelemetryData(source, dest, path, telemetry, comment, out, outSize, &written)` | Build a telemetry data report (`T#`). |
+| `aprs::encodeTelemetryLabel`/`Unit`/`Equation`/`BitSense(source, dest, path, telemetry, out, outSize, &written)` | Build a telemetry `PARM`/`UNIT`/`EQNS`/`BITS` metadata message. |
+| `aprs::encodeObjectItem(source, dest, path, type, item, position, comment, out, outSize, &written)` | Build an object or item report. |
+| `aprs::encodeStatus(source, dest, path, status, out, outSize, &written)` | Build a status report. |
+| `aprs::encodeRaw(source, dest, path, content, out, outSize, &written)` | Emit caller-provided content verbatim after the header. |
 | `aprs::decode(raw, lite)` | Parse the envelope and classify the type. |
 | `aprs::decodeMessage(lite, message)` | Extract a message payload on demand. |
 | `aprs::decodePosition(lite, position)` | Decode lat/lon, symbol, course/speed/altitude, timestamp. |
@@ -142,7 +160,7 @@ aprs::canBeDigipeated(path, sizeof path, "KB1MKZ", opt);
 | `aprs::lastDigipeater(path, out, size)` | Last station that relayed + hop count. |
 | `aprs::encodeGridLocator(lat, lon, out, size, pairs)` | Convert lat/lon to a Maidenhead grid locator. |
 | `aprs::decodeGridLocator(locator, &lat, &lon)` | Convert a Maidenhead grid locator back to lat/lon. |
-| `aprs::reset(...)` | Reset a `Packet` / `PacketLite` / `Message`. |
+| `aprs::reset(...)` | Reset a `PacketLite` / `Message`. |
 
 All sizes and limits are exposed as `constexpr` constants (`aprs::kMaxPacketLength`,
 `aprs::kCallsignLength`, `aprs::kPathLength`, …).
@@ -163,6 +181,13 @@ the APRS Digipeater Algorithm document.
 
 ## Notes
 
+- There is no monolithic "packet" struct bundling every payload kind
+  together — each `encodeXxx()` function takes only the ONE payload struct it
+  needs. This matters on the tightest targets: on an ATmega328P Uno (2 KB of
+  RAM total), a `Position` is 30 bytes and a `Telemetry` (5 analog + 8 boolean
+  channels) is 358 bytes, versus the 1244 bytes a single struct holding all
+  five payload kinds side by side would cost for every encode call regardless
+  of which one you actually use.
 - Weather reports are emitted in the **compressed** form: wind direction/speed
   are carried in the compressed-position `cs` bytes and the weather data starts
   at the gust field, as required by the spec.
